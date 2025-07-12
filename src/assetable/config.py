@@ -1,26 +1,34 @@
 """
 Configuration management for Assetable.
 
-This module provides centralized configuration management using Pydantic.
+This module provides centralized configuration handling using Pydantic.
 All configuration is type-safe and validated.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, Optional, cast
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field, field_validator
+
+
+
+# PDF splitting settings
 
 
 class PDFSplitConfig(BaseModel):
     """Configuration for PDF splitting."""
 
-    dpi: int = Field(default=300, description="DPI for image conversion")
-    image_format: str = Field(default="png", description="Output image format")
+    dpi: int = Field(300, description="DPI for image conversion")
+    image_format: str = Field("png", description="Output image format")
+
+    # --- validators --------------------------------------------------------
 
     @field_validator("dpi")
-    def validate_dpi(cls, v: int) -> int:
-        """Validate DPI value."""
+    def _validate_dpi(cls, v: int) -> int:
         if v < 72:
             raise ValueError("DPI must be at least 72")
         if v > 600:
@@ -28,114 +36,104 @@ class PDFSplitConfig(BaseModel):
         return v
 
     @field_validator("image_format")
-    def validate_image_format(cls, v: str) -> str:
-        """Validate image format."""
-        allowed_formats = ["png", "jpg", "jpeg"]
-        if v.lower() not in allowed_formats:
-            raise ValueError(f"Image format must be one of: {allowed_formats}")
+    def _validate_image_format(cls, v: str) -> str:
+        allowed = {"png", "jpg", "jpeg"}
+        if v.lower() not in allowed:
+            raise ValueError(f"Image format must be one of: {sorted(allowed)}")
         return v.lower()
+
+
+
+# AI processing settings
 
 
 class AIConfig(BaseModel):
     """Configuration for AI processing."""
 
-    # Ollama settings
-    ollama_host: str = Field(default="http://localhost:11434", description="Ollama server URL")
+    # Ollama
+    ollama_host: str = Field("http://localhost:11434", description="Ollama server URL")
 
-    # Model settings
-    structure_analysis_model: str = Field(
-        default="qwen2.5-vl:7b",
-        description="Model for structure analysis"
-    )
-    asset_extraction_model: str = Field(
-        default="qwen2.5-vl:7b",
-        description="Model for asset extraction"
-    )
-    markdown_generation_model: str = Field(
-        default="qwen2.5-vl:7b",
-        description="Model for markdown generation"
-    )
+    # Models
+    structure_analysis_model: str = Field("mistral-small3.2:latest", description="Model for structure analysis")
+    asset_extraction_model: str = Field("mistral-small3.2:latest", description="Model for asset extraction")
+    markdown_generation_model: str = Field("mistral-small3.2:latest", description="Model for markdown generation")
 
-    # Processing settings
-    max_retries: int = Field(default=3, description="Maximum retry attempts for AI calls")
-    timeout_seconds: int = Field(default=300, description="Timeout for AI processing in seconds")
+    # Retry / timeout
+    max_retries: int = Field(3, description="Maximum retry attempts for AI calls")
+    timeout_seconds: int = Field(300, description="Timeout for AI processing in seconds")
 
-    # Temperature and other model parameters
-    temperature: float = Field(default=0.1, description="Temperature for AI model")
-    top_p: float = Field(default=0.9, description="Top-p for AI model")
+    # Sampling parameters
+    temperature: float = Field(0.1, description="Temperature for AI model")
+    top_p: float = Field(0.9, description="Top-p for AI model")
+
+    # --- validators --------------------------------------------------------
 
     @field_validator("temperature")
-    def validate_temperature(cls, v: float) -> float:
-        """Validate temperature value."""
+    def _validate_temperature(cls, v: float) -> float:
         if not 0.0 <= v <= 2.0:
             raise ValueError("Temperature must be between 0.0 and 2.0")
         return v
 
     @field_validator("top_p")
-    def validate_top_p(cls, v: float) -> float:
-        """Validate top-p value."""
+    def _validate_top_p(cls, v: float) -> float:
         if not 0.0 <= v <= 1.0:
             raise ValueError("Top-p must be between 0.0 and 1.0")
         return v
+
+
+
+# Output directory & filename settings
 
 
 class OutputConfig(BaseModel):
     """Configuration for output directories and file patterns."""
 
     # Base directories
-    input_directory: Path = Field(default=Path("input"), description="Base directory for input PDFs")
-    output_directory: Path = Field(default=Path("output"), description="Base directory for processed output")
+    input_directory: Path = Field(Path("input"), description="Base directory for input PDFs")
+    output_directory: Path = Field(Path("output"), description="Base directory for processed output")
 
-    # Subdirectory names
-    pdf_split_subdir: str = Field(default="pdfSplitted", description="Subdirectory for split page images")
-    structure_subdir: str = Field(default="pageStructure", description="Subdirectory for page structure JSONs")
-    markdown_subdir: str = Field(default="markdown", description="Subdirectory for generated markdown files")
-    csv_subdir: str = Field(default="csv", description="Subdirectory for extracted CSV tables")
-    images_subdir: str = Field(default="images", description="Subdirectory for extracted images")
-    figures_subdir: str = Field(default="figures", description="Subdirectory for extracted figures data")
+    # Sub-directories
+    pdf_split_subdir: str = Field("pdfSplitted", description="Subdirectory for split page images")
+    structure_subdir: str = Field("pageStructure", description="Subdirectory for page structure JSONs")
+    markdown_subdir: str = Field("markdown", description="Subdirectory for generated markdown files")
+    csv_subdir: str = Field("csv", description="Subdirectory for extracted CSV tables")
+    images_subdir: str = Field("images", description="Subdirectory for extracted images")
+    figures_subdir: str = Field("figures", description="Subdirectory for extracted figure data")
 
-    # File naming patterns
-    page_image_pattern: str = Field(default="page_{page:04d}.png", description="Filename pattern for page images")
-    structure_json_pattern: str = Field(default="page_{page:04d}_structure.json", description="Filename pattern for structure JSONs")
-    markdown_pattern: str = Field(default="page_{page:04d}.md", description="Filename pattern for markdown files")
+    # Filename patterns
+    page_image_pattern: str = Field("page_{page:04d}.png", description="Filename pattern for page images")
+    structure_json_pattern: str = Field("page_{page:04d}_structure.json",
+                                        description="Filename pattern for structure JSONs")
+    markdown_pattern: str = Field("page_{page:04d}.md", description="Filename pattern for markdown files")
+
+    # --- validators --------------------------------------------------------
 
     @field_validator("input_directory", "output_directory", mode="before")
-    def validate_dirs(cls, v: Any) -> Path:
-        """Validate directory paths."""
-        # Convert to absolute path
-        absolute_path = Path(v).resolve()
-        return absolute_path
+    def _abs_paths(cls, v: Any) -> Path:
+        return Path(v).resolve()
+
+
+
+# Processing behaviour settings
 
 
 class ProcessingConfig(BaseModel):
-    """Configuration for processing behavior."""
+    """Configuration for processing behaviour."""
 
-    # Skip settings
-    skip_existing_files: bool = Field(
-        default=True,
-        description="Skip processing if output files already exist"
-    )
+    skip_existing_files: bool = Field(True, description="Skip processing if output files already exist")
+    max_parallel_pages: int = Field(1, description="Maximum number of pages to process in parallel")
 
-    # Parallel processing
-    max_parallel_pages: int = Field(
-        default=1,
-        description="Maximum number of pages to process in parallel"
-    )
+    debug_mode: bool = Field(False, description="Enable debug logging")
+    save_intermediate_results: bool = Field(True, description="Save intermediate results")
 
-    # Debug settings
-    debug_mode: bool = Field(default=False, description="Enable debug logging")
-    save_intermediate_results: bool = Field(
-        default=True,
-        description="Save intermediate processing results"
-    )
+    # Asset extraction thresholds
+    min_table_rows: int = Field(2, description="Minimum rows to consider as table")
+    min_figure_elements: int = Field(1, description="Minimum elements to consider as figure")
 
-    # Asset extraction settings
-    min_table_rows: int = Field(default=2, description="Minimum rows to consider as table")
-    min_figure_elements: int = Field(default=1, description="Minimum elements to consider as figure")
+    # --- validators --------------------------------------------------------
 
     @field_validator("max_parallel_pages")
-    def validate_parallel_pages(cls, v: int) -> int:
-        """Validate parallel processing settings."""
+    def _validate_parallel(cls, v: int) -> int:
         if v < 1:
             raise ValueError("max_parallel_pages must be at least 1")
         if v > 10:
@@ -143,122 +141,121 @@ class ProcessingConfig(BaseModel):
         return v
 
 
+
+# Master configuration
+
 class AssetableConfig(BaseModel):
     """Main configuration class for Assetable."""
 
-    # Sub-configurations
-    pdf_split: PDFSplitConfig = Field(default_factory=PDFSplitConfig)
-    ai: AIConfig = Field(default_factory=AIConfig)
-    output: OutputConfig = Field(default_factory=OutputConfig)
-    processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+# default_factory は 「引数の要らない callable」 を受け取りますが，PDFSplitConfig など Pydantic BaseModel 派生クラス は
+# def __init__(self, **data: Any) -> None: ...
+# という 可変長キーワード引数 を持つコンストラクタと解釈されるため，Pyright は
+# パラメーター "dpi", "image_format" に引数がありませんのように 必須実引数を渡していない と誤検知します。
+# 最小限で型安全な解決策： typing.cast で 「引数なし callable」の型に変換してから渡す と Pyright の型判定が通ります。
+# ランタイム挙動は一切変わりません。
 
-    # Version info
+    pdf_split: PDFSplitConfig = Field(
+        default_factory=cast(Callable[[], PDFSplitConfig], PDFSplitConfig)
+    )
+    ai: AIConfig = Field(
+        default_factory=cast(Callable[[], AIConfig], AIConfig)
+    )
+    output: OutputConfig = Field(
+        default_factory=cast(Callable[[], OutputConfig], OutputConfig)
+    )
+    processing: ProcessingConfig = Field(
+        default_factory=cast(Callable[[], ProcessingConfig], ProcessingConfig)
+    )
+
     version: str = Field(default="0.1.0", description="Assetable version")
 
+    # ---------------------------------------------------------------------
+    # Environment overrides
+    # ---------------------------------------------------------------------
     @classmethod
     def from_env(cls) -> "AssetableConfig":
-        """Create configuration from environment variables."""
-        config = cls()
+        cfg = cls()
 
-        # Override with environment variables if they exist
-        if ollama_host := os.getenv("ASSETABLE_OLLAMA_HOST"):
-            config.ai.ollama_host = ollama_host
+        if h := os.getenv("ASSETABLE_OLLAMA_HOST"):
+            cfg.ai.ollama_host = h
 
-        if structure_model := os.getenv("ASSETABLE_STRUCTURE_MODEL"):
-            config.ai.structure_analysis_model = structure_model
+        if m := os.getenv("ASSETABLE_STRUCTURE_MODEL"):
+            cfg.ai.structure_analysis_model = m
 
-        if asset_model := os.getenv("ASSETABLE_ASSET_MODEL"):
-            config.ai.asset_extraction_model = asset_model
+        if m := os.getenv("ASSETABLE_ASSET_MODEL"):
+            cfg.ai.asset_extraction_model = m
 
-        if markdown_model := os.getenv("ASSETABLE_MARKDOWN_MODEL"):
-            config.ai.markdown_generation_model = markdown_model
+        if m := os.getenv("ASSETABLE_MARKDOWN_MODEL"):
+            cfg.ai.markdown_generation_model = m
 
         if dpi := os.getenv("ASSETABLE_DPI"):
-            config.pdf_split.dpi = int(dpi)
+            cfg.pdf_split.dpi = int(dpi)
 
-        if input_dir := os.getenv("ASSETABLE_INPUT_DIR"):
-            config.output.input_directory = Path(input_dir)
+        if d := os.getenv("ASSETABLE_INPUT_DIR"):
+            cfg.output.input_directory = Path(d)
 
-        if output_dir := os.getenv("ASSETABLE_OUTPUT_DIR"):
-            config.output.output_directory = Path(output_dir)
+        if d := os.getenv("ASSETABLE_OUTPUT_DIR"):
+            cfg.output.output_directory = Path(d)
 
-        if debug := os.getenv("ASSETABLE_DEBUG"):
-            config.processing.debug_mode = debug.lower() in ("true", "1", "yes")
+        if dbg := os.getenv("ASSETABLE_DEBUG"):
+            cfg.processing.debug_mode = dbg.lower() in {"true", "1", "yes"}
 
-        return config
+        return cfg
 
+    # ---------------------------------------------------------------------
+    # Helper path getters
+    # ---------------------------------------------------------------------
     def get_document_output_dir(self, pdf_path: Path) -> Path:
-        """Get output directory for a specific PDF document."""
-        pdf_name = pdf_path.stem
-        return self.output.output_directory / pdf_name
+        return self.output.output_directory / pdf_path.stem
 
     def get_pdf_split_dir(self, pdf_path: Path) -> Path:
-        """Get PDF split directory for a specific document."""
         return self.get_document_output_dir(pdf_path) / self.output.pdf_split_subdir
 
     def get_structure_dir(self, pdf_path: Path) -> Path:
-        """Get page structure directory for a specific document."""
         return self.get_document_output_dir(pdf_path) / self.output.structure_subdir
 
     def get_markdown_dir(self, pdf_path: Path) -> Path:
-        """Get markdown directory for a specific document."""
         return self.get_document_output_dir(pdf_path) / self.output.markdown_subdir
 
     def get_csv_dir(self, pdf_path: Path) -> Path:
-        """Get CSV directory for a specific document."""
         return self.get_markdown_dir(pdf_path) / self.output.csv_subdir
 
     def get_images_dir(self, pdf_path: Path) -> Path:
-        """Get images directory for a specific document."""
         return self.get_markdown_dir(pdf_path) / self.output.images_subdir
 
     def get_figures_dir(self, pdf_path: Path) -> Path:
-        """Get figures directory for a specific document."""
         return self.get_markdown_dir(pdf_path) / self.output.figures_subdir
 
-    def get_page_image_path(self, pdf_path: Path, page_number: int) -> Path:
-        """Get path for a specific page image."""
-        # Use the image_format from pdf_split config to determine the extension
-        extension = self.pdf_split.image_format.lower()
-        if extension == "jpeg": # common alternative for jpg
-            extension = "jpg"
-        # Original pattern might have a hardcoded extension, remove it if present
-        base_pattern = self.output.page_image_pattern.rsplit('.', 1)[0]
-        filename = f"{base_pattern.format(page=page_number)}.{extension}"
+    def get_page_image_path(self, pdf_path: Path, page: int) -> Path:
+        ext = self.pdf_split.image_format.lower().replace("jpeg", "jpg")
+        base = self.output.page_image_pattern.rsplit(".", 1)[0]
+        filename = f"{base.format(page=page)}.{ext}"
         return self.get_pdf_split_dir(pdf_path) / filename
 
-    def get_structure_json_path(self, pdf_path: Path, page_number: int) -> Path:
-        """Get path for a specific page structure JSON."""
-        filename = self.output.structure_json_pattern.format(page=page_number)
+    def get_structure_json_path(self, pdf_path: Path, page: int) -> Path:
+        filename = self.output.structure_json_pattern.format(page=page)
         return self.get_structure_dir(pdf_path) / filename
 
-    def get_markdown_path(self, pdf_path: Path, page_number: int) -> Path:
-        """Get path for a specific page markdown file."""
-        filename = self.output.markdown_pattern.format(page=page_number)
+    def get_markdown_path(self, pdf_path: Path, page: int) -> Path:
+        filename = self.output.markdown_pattern.format(page=page)
         return self.get_markdown_dir(pdf_path) / filename
 
-    def get_asset_path(self, pdf_path: Path, page_number: int, asset_type: str, asset_name: str) -> Path:
-        """Get path for a specific asset file."""
-        # Clean asset name for filename
-        clean_name = "".join(c for c in asset_name if c.isalnum() or c in (' ', '-', '_')).strip()
-        clean_name = clean_name.replace(' ', '_')
+    def get_asset_path(self, pdf_path: Path, page: int, asset_type: str, asset_name: str) -> Path:
+        clean = "".join(c for c in asset_name if c.isalnum() or c in {" ", "-", "_"}).strip().replace(" ", "_")
 
         if asset_type == "table":
-            filename = f"page_{page_number:04d}_{clean_name}.csv"
-            return self.get_csv_dir(pdf_path) / filename
-        elif asset_type == "figure":
-            filename = f"page_{page_number:04d}_{clean_name}.json"
-            return self.get_figures_dir(pdf_path) / filename
-        elif asset_type == "image":
-            # Assuming common image extension, can be made more robust
-            filename = f"page_{page_number:04d}_{clean_name}.jpg"
-            return self.get_images_dir(pdf_path) / filename
-        else:
-            raise ValueError(f"Unknown asset type: {asset_type}")
+            return self.get_csv_dir(pdf_path) / f"page_{page:04d}_{clean}.csv"
+        if asset_type == "figure":
+            return self.get_figures_dir(pdf_path) / f"page_{page:04d}_{clean}.json"
+        if asset_type == "image":
+            return self.get_images_dir(pdf_path) / f"page_{page:04d}_{clean}.jpg"
+        raise ValueError(f"Unknown asset type: {asset_type}")
 
+    # ---------------------------------------------------------------------
+    # I/O helpers
+    # ---------------------------------------------------------------------
     def create_output_directories(self, pdf_path: Path) -> None:
-        """Create all necessary output directories for a document."""
-        directories = [
+        for d in (
             self.get_document_output_dir(pdf_path),
             self.get_pdf_split_dir(pdf_path),
             self.get_structure_dir(pdf_path),
@@ -266,46 +263,47 @@ class AssetableConfig(BaseModel):
             self.get_csv_dir(pdf_path),
             self.get_images_dir(pdf_path),
             self.get_figures_dir(pdf_path),
-        ]
+        ):
+            d.mkdir(parents=True, exist_ok=True)
 
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
+    # ---------------------------------------------------------------------
+    # Serialization helpers
+    # ---------------------------------------------------------------------
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert configuration to a plain Python dictionary.
 
-    def to_dict(self) -> Dict:
-        """Convert configuration to dictionary."""
-        # Pydantic v2 uses model_dump, v1 uses dict
+        Uses `model_dump()` for Pydantic v2 and falls back to `dict()` for v1.
+        """
         if hasattr(self, "model_dump"):
-            return self.model_dump()
-        return self.dict()
+            return self.model_dump()  # type: ignore[attr-defined]
+        return self.dict()  # type: ignore[deprecated]
 
     def save_to_file(self, file_path: Path) -> None:
-        """Save configuration to JSON file."""
         import json
 
-        with open(file_path, 'w', encoding='utf-8') as f:
-            # Pydantic v2 uses model_dump_json
+        with open(file_path, "w", encoding="utf-8") as f:
             if hasattr(self, "model_dump_json"):
-                f.write(self.model_dump_json(indent=2))
+                f.write(self.model_dump_json(indent=2))  # type: ignore[attr-defined]
             else:
                 json.dump(self.to_dict(), f, indent=2, ensure_ascii=False, default=str)
 
     @classmethod
     def load_from_file(cls, file_path: Path) -> "AssetableConfig":
-        """Load configuration from JSON file."""
         import json
 
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-
-        return cls(**data)
+        with open(file_path, "r", encoding="utf-8") as f:
+            return cls(**json.load(f))
 
 
-# Global configuration instance
+
+# Global config singleton helpers
+
+
 _config: Optional[AssetableConfig] = None
 
 
 def get_config() -> AssetableConfig:
-    """Get the global configuration instance."""
     global _config
     if _config is None:
         _config = AssetableConfig.from_env()
@@ -313,12 +311,10 @@ def get_config() -> AssetableConfig:
 
 
 def set_config(config: AssetableConfig) -> None:
-    """Set the global configuration instance."""
     global _config
     _config = config
 
 
 def reset_config() -> None:
-    """Reset the global configuration instance."""
     global _config
     _config = None

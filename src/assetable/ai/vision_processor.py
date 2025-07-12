@@ -5,28 +5,21 @@ This module provides enhanced Vision AI processing capabilities using Ollama
 with detailed prompt engineering and robust error handling.
 """
 
-import json
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from ..config import AssetableConfig, get_config
 from ..models import (
-    AIInput,
-    AssetExtractionOutput,
-    BoundingBox,
     FigureAsset,
     ImageAsset,
-    MarkdownGenerationOutput,
     PageData,
     PageStructure,
-    ProcessingStage,
-    StructureAnalysisOutput,
     TableAsset,
 )
-from .ollama_client import OllamaClient, OllamaError
+from .ollama_client import OllamaClient
 from .prompts import (
     AssetExtractionPrompts,
     MarkdownGenerationPrompts,
@@ -217,7 +210,7 @@ class EnhancedVisionProcessor:
         self._processing_stats['asset_extraction']['count'] += 1
 
         try:
-            extracted_assets = []
+            extracted_assets: List[Union[TableAsset, FigureAsset, ImageAsset]] = []
 
             if self.config.processing.debug_mode:
                 print(f"Starting asset extraction for page {page_data.page_number}")
@@ -342,7 +335,7 @@ class EnhancedVisionProcessor:
                 system_prompt=system_prompt
             )
 
-            if not isinstance(markdown_content, str) or not markdown_content.strip():
+            if not markdown_content or not markdown_content.strip():
                 raise VisionProcessorError("Empty or invalid Markdown content generated")
 
             # Clean up and validate Markdown content
@@ -395,7 +388,7 @@ class EnhancedVisionProcessor:
                 system_prompt=system_prompt
             )
 
-            if isinstance(csv_content, str) and csv_content.strip():
+            if csv_content and csv_content.strip():
                 # Clean and validate CSV content
                 csv_content = self._clean_csv_content(csv_content)
 
@@ -444,7 +437,7 @@ class EnhancedVisionProcessor:
             )
 
             if isinstance(figure_data, FigureStructureResponse):
-                figure.raw_json = figure_data.dict()
+                figure.raw_json = figure_data.model_dump()
 
                 # TODO: Convert to FigureNode structure in future iterations
                 # For now, store in raw_json format
@@ -469,7 +462,7 @@ class EnhancedVisionProcessor:
                 system_prompt=system_prompt
             )
 
-            if isinstance(description, str) and description.strip():
+            if description and description.strip():
                 # Update image with enhanced description
                 image.description = description.strip()
                 image.image_type = image.image_type or "analyzed"
@@ -496,25 +489,13 @@ class EnhancedVisionProcessor:
                 raise VisionProcessorError(f"Invalid bounding box for {asset.name}")
 
             bbox = asset.bbox.bbox_2d
-        if page_structure.page_number < 1:
-            raise VisionProcessorError("Invalid page number in structure")
-
-        all_assets = page_structure.tables + page_structure.figures + page_structure.images
-        for asset in all_assets:
-            if not asset.name:
-                raise VisionProcessorError("Asset name is missing")
-
-            if not asset.bbox or len(asset.bbox.bbox_2d) != 4:
-                raise VisionProcessorError(f"Invalid bounding box for {asset.name}")
-
-            bbox = asset.bbox.bbox_2d
             if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
                 raise VisionProcessorError(f"Invalid bounding box coordinates for {asset.name}")
 
     def _clean_csv_content(self, csv_content: str) -> str:
         """Clean and validate CSV content."""
         # Remove any markdown formatting
-        lines = []
+        lines: List[str] = []
         for line in csv_content.split('\n'):
             line = line.strip()
             # Skip empty lines and markdown formatting
@@ -526,10 +507,10 @@ class EnhancedVisionProcessor:
     def _clean_markdown_content(self, markdown_content: str) -> str:
         """Clean and validate Markdown content."""
         # Remove any extra formatting or artifacts
-        lines = []
+        lines: List[str] = []
         for line in markdown_content.split('\n'):
             # Skip lines that look like AI response artifacts
-            if line.strip() and not line.strip().startswith('```') and not line.strip().endswith('```'):
+            if line.strip() and not line.strip().startswith('```'):
                 lines.append(line)
 
         return '\n'.join(lines).strip()
@@ -538,11 +519,11 @@ class EnhancedVisionProcessor:
         """Extract asset file references from Markdown content."""
         import re
 
-        references = []
+        references: List[str] = []
 
         # Find Markdown links and images
-        link_pattern = r'\[([^\]]+)\]\(([^)]+)\)'
-        image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+        link_pattern = r'$$([^$$]+)$$$$([^)]+)$$'
+        image_pattern = r'!$$([^$$]*)$$$$([^)]+)$$'
 
         for match in re.finditer(link_pattern, markdown_content):
             ref_path = match.group(2)
@@ -558,10 +539,10 @@ class EnhancedVisionProcessor:
 
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get comprehensive processing statistics."""
-        stats = {'processing_stats': self._processing_stats.copy()}
+        stats: Dict[str, Any] = {'processing_stats': self._processing_stats.copy()}
 
         # Calculate averages
-        for stage, stage_stats in stats['processing_stats'].items():
+        for stage_stats in stats['processing_stats'].values():
             if stage_stats['count'] > 0:
                 stage_stats['average_time'] = stage_stats['total_time'] / stage_stats['count']
                 stage_stats['success_rate'] = stage_stats['success_count'] / stage_stats['count']
@@ -572,8 +553,8 @@ class EnhancedVisionProcessor:
         # Add Ollama client stats
         stats['ollama_stats'] = self.ollama_client.get_processing_stats()
 
-        # Add model configuration
-        stats['models_used'] = {
+        # Add model configuration as a separate key to avoid type conflicts
+        stats['model_configuration'] = {
             'structure_analysis': self.config.ai.structure_analysis_model,
             'asset_extraction': self.config.ai.asset_extraction_model,
             'markdown_generation': self.config.ai.markdown_generation_model,

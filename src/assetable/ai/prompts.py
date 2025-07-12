@@ -7,12 +7,11 @@ This module provides structured prompts for the three-stage AI processing:
 3. Markdown Generation
 """
 
-from pathlib import Path
-from typing import List, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
-from ..models import PageData, PageStructure
+from ..models import PageData, TableAsset, FigureAsset, ImageAsset
 
 
 class PromptTemplate(BaseModel):
@@ -21,7 +20,7 @@ class PromptTemplate(BaseModel):
     system_prompt: str
     user_prompt_template: str
 
-    def format_user_prompt(self, **kwargs) -> str:
+    def format_user_prompt(self, **kwargs: Any) -> str:
         """Format the user prompt with provided parameters."""
         return self.user_prompt_template.format(**kwargs)
 
@@ -150,7 +149,7 @@ Provide:
 Focus on extracting all meaningful information that could be referenced in text."""
 
     @classmethod
-    def create_table_prompt(cls, table_asset, page_number: int) -> tuple[str, str]:
+    def create_table_prompt(cls, table_asset: TableAsset, page_number: int) -> tuple[str, str]:
         """Create prompts for table extraction."""
         user_prompt = cls.TABLE_EXTRACTION_TEMPLATE.format(
             table_name=table_asset.name,
@@ -161,7 +160,7 @@ Focus on extracting all meaningful information that could be referenced in text.
         return cls.SYSTEM_PROMPT, user_prompt
 
     @classmethod
-    def create_figure_prompt(cls, figure_asset, page_number: int) -> tuple[str, str]:
+    def create_figure_prompt(cls, figure_asset: FigureAsset, page_number: int) -> tuple[str, str]:
         """Create prompts for figure extraction."""
         user_prompt = cls.FIGURE_EXTRACTION_TEMPLATE.format(
             figure_name=figure_asset.name,
@@ -173,7 +172,7 @@ Focus on extracting all meaningful information that could be referenced in text.
         return cls.SYSTEM_PROMPT, user_prompt
 
     @classmethod
-    def create_image_prompt(cls, image_asset, page_number: int) -> tuple[str, str]:
+    def create_image_prompt(cls, image_asset: ImageAsset, page_number: int) -> tuple[str, str]:
         """Create prompts for image extraction."""
         user_prompt = cls.IMAGE_EXTRACTION_TEMPLATE.format(
             image_name=image_asset.name,
@@ -238,7 +237,7 @@ Output only the Markdown content, no additional formatting or explanation."""
         structure_context = ""
         if page_data.page_structure:
             structure = page_data.page_structure
-            structure_parts = []
+            structure_parts: list[str] = []
             if structure.tables:
                 structure_parts.append(f"Tables: {len(structure.tables)}")
             if structure.figures:

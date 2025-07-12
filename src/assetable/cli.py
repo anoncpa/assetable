@@ -6,34 +6,30 @@ This module provides CLI commands for PDF processing pipeline using Typer.
 
 import typer
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
-from .config import AssetableConfig, get_config, ProcessingStage
-from .pipeline.pdf_splitter import split_pdf_cli, PDFSplitter
+from .config import get_config
+from .pdf.pdf_splitter import split_pdf_cli, PDFSplitter
 from .file_manager import FileManager
 from .pipeline.engine import (
     PipelineEngine,
-    PDFSplitStep,
-    run_pipeline,
-    run_single_step,
 )
 from .ai.ollama_client import OllamaClient
 from .ai.vision_processor import EnhancedVisionProcessor
-from .pipeline.ai_steps import (
+from .ai.ai_steps import (
     EnhancedAIStructureAnalysisStep,
     EnhancedAIAssetExtractionStep,
     EnhancedAIMarkdownGenerationStep,
 )
 import asyncio
 import time
-from .models import PageData
+from .models import PageData, ProcessingStage, DocumentData
 
 app = typer.Typer(
     name="assetable",
     help="Convert scanned books into AI- and human-readable digital assets",
     add_completion=False
 )
-
 
 @app.command()
 def split(
@@ -338,7 +334,7 @@ def pipeline(
         config.processing.skip_existing_files = False
 
     # Parse stages
-    target_stages = None
+    target_stages: Optional[List[ProcessingStage]] = None
     if stages:
         stage_mapping = {
             "split": ProcessingStage.PDF_SPLIT,
@@ -370,7 +366,7 @@ def pipeline(
         engine = PipelineEngine(config)
 
         # Get initial status
-        initial_status = engine.get_pipeline_status(pdf_file)
+        initial_status: Dict[str, Any] = engine.get_pipeline_status(pdf_file)
 
         if initial_status.get("status") == "not_started":
             typer.echo(f"Starting pipeline for {pdf_file.name}")
@@ -381,7 +377,7 @@ def pipeline(
         typer.echo("")
 
         # Run pipeline
-        async def run_async():
+        async def run_async() -> DocumentData:
             return await engine.execute_pipeline(pdf_file, target_stages, page_numbers)
 
         # Execute pipeline
@@ -392,10 +388,10 @@ def pipeline(
             progress.update(100)
 
         # Display results
-        final_status = engine.get_pipeline_status(pdf_file)
+        final_status: Dict[str, Any] = engine.get_pipeline_status(pdf_file)
 
         typer.echo(f"\nPipeline completed!")
-        typer.echo(f"Total pages: {document_data.total_pages}")
+        typer.echo(f"Total pages: {len(document_data.pages)}")
         typer.echo(f"Overall progress: {final_status.get('overall_progress', 0):.1%}")
 
         # Show step details
@@ -406,7 +402,7 @@ def pipeline(
                           f"({step_info['completed_pages']}/{step_info['completed_pages'] + step_info['pending_pages']} pages)")
 
         # Show execution stats
-        if engine.execution_stats and debug:
+        if hasattr(engine, 'execution_stats') and engine.execution_stats and debug:
             typer.echo(f"\nExecution Statistics:")
             stats = engine.execution_stats
             typer.echo(f"  Execution time: {stats.get('execution_time_seconds', 0):.1f} seconds")
@@ -475,7 +471,6 @@ def analyze(
         image_path = config.get_page_image_path(pdf_file, page)
         if not image_path.exists():
             typer.echo(f"Page image not found. Running PDF split first...")
-            from .pipeline.pdf_splitter import PDFSplitter
             splitter = PDFSplitter(config)
             splitter.split_pdf(pdf_file)
 
@@ -507,7 +502,6 @@ def analyze(
 
                 if page_data.page_structure:
                     structure = page_data.page_structure
-                    typer.echo(f"   📝 Text detected: {structure.has_text}")
                     typer.echo(f"   📊 Tables found: {len(structure.tables)}")
                     typer.echo(f"   📈 Figures found: {len(structure.figures)}")
                     typer.echo(f"   🖼️  Images found: {len(structure.images)}")
@@ -603,7 +597,7 @@ def analyze(
             saved_count = 0
             for asset in page_data.extracted_assets:
                 try:
-                    asset_path = file_manager.save_asset_file(pdf_file, page, asset)
+                    file_manager.save_asset_file(pdf_file, page, asset)
                     saved_count += 1
                 except Exception as e:
                     if debug:
@@ -616,8 +610,8 @@ def analyze(
             markdown_path = file_manager.save_markdown_content(pdf_file, page, page_data.markdown_content)
             typer.echo(f"💾 Saved Markdown to: {markdown_path}")
 
-        output_dir = config.get_document_output_dir(pdf_file)
-        typer.echo(f"\n📁 Output directory: {output_dir}")
+        output_dir_path = config.get_document_output_dir(pdf_file)
+        typer.echo(f"\n📁 Output directory: {output_dir_path}")
         typer.echo("✨ Analysis completed successfully!")
 
     except Exception as e:
@@ -676,7 +670,6 @@ def process_single(
         image_path = config.get_page_image_path(pdf_file, page)
         if not image_path.exists():
             typer.echo(f"Page image not found. Running PDF split first...")
-            from .pipeline.pdf_splitter import PDFSplitter
             splitter = PDFSplitter(config)
             splitter.split_pdf(pdf_file)
 
@@ -727,8 +720,8 @@ def process_single(
             for log_entry in page_data.processing_log[-5:]:  # Show last 5 entries
                 typer.echo(f"   {log_entry}")
 
-        output_dir = config.get_document_output_dir(pdf_file)
-        typer.echo(f"\n📁 Output directory: {output_dir}")
+        output_dir_path = config.get_document_output_dir(pdf_file)
+        typer.echo(f"\n📁 Output directory: {output_dir_path}")
         typer.echo("✨ Single page processing completed!")
 
     except Exception as e:
@@ -788,7 +781,7 @@ def check_ai(
             typer.echo(f"  Markdown generation: {config.ai.markdown_generation_model}")
 
             # Verify configured models are available
-            missing_models = []
+            missing_models: List[str] = []
             for model_name in [config.ai.structure_analysis_model,
                                config.ai.asset_extraction_model,
                                config.ai.markdown_generation_model]:
@@ -819,129 +812,6 @@ def check_ai(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
-
-@app.command()
-def test_ai(
-    pdf_path: str = typer.Argument(..., help="Path to PDF file for testing"),
-    page: int = typer.Option(1, "--page", "-p", help="Page number to test"),
-    stage: str = typer.Option("structure", "--stage", "-s",
-                             help="Stage to test (structure, extraction, markdown, all)"),
-    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
-) -> None:
-    """
-    Test AI processing on a single page.
-
-    This command tests the AI processing pipeline on a single page
-    to verify functionality and performance.
-    """
-    # Validate input
-    pdf_file = Path(pdf_path)
-    if not pdf_file.exists():
-        typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
-        raise typer.Exit(1)
-
-    # Setup configuration
-    config = get_config()
-    if debug:
-        config.processing.debug_mode = True
-
-    try:
-        # Initialize vision processor
-        typer.echo("Initializing AI system...")
-        vision_processor = EnhancedVisionProcessor(config)
-
-        # Create temporary page data for testing
-        from .models import PageData
-        from .file_manager import FileManager
-
-        file_manager = FileManager(config)
-
-        # Ensure page image exists (run PDF split if needed)
-        image_path = config.get_page_image_path(pdf_file, page)
-        if not image_path.exists():
-            typer.echo(f"Page image not found. Running PDF split first...")
-            from .pipeline.pdf_splitter import PDFSplitter
-            splitter = PDFSplitter(config)
-            splitter.split_pdf(pdf_file)
-
-        # Create page data
-        page_data = PageData(
-            page_number=page,
-            source_pdf=pdf_file,
-            image_path=image_path
-        )
-
-        typer.echo(f"Testing AI processing on page {page}...")
-
-        if stage in ["structure", "all"]:
-            typer.echo("Running structure analysis...")
-            start_time = time.time()
-
-            result = vision_processor.analyze_page_structure(page_data)
-            page_data.page_structure = result.page_structure
-
-            processing_time = time.time() - start_time
-            typer.echo(f"✓ Structure analysis completed in {processing_time:.2f} seconds")
-
-            if page_data.page_structure:
-                typer.echo(f"  - Text detected: {page_data.page_structure.has_text}")
-                typer.echo(f"  - Tables found: {len(page_data.page_structure.tables) if page_data.page_structure.tables else 0}")
-                typer.echo(f"  - Figures found: {len(page_data.page_structure.figures) if page_data.page_structure.figures else 0}")
-                typer.echo(f"  - Images found: {len(page_data.page_structure.images) if page_data.page_structure.images else 0}")
-                typer.echo(f"  - References found: {len(page_data.page_structure.references) if page_data.page_structure.references else 0}")
-
-        if stage in ["extraction", "all"]:
-            if not page_data.page_structure:
-                typer.echo("Skipping extraction: structure analysis not run.")
-            else:
-                typer.echo("Running asset extraction...")
-                start_time = time.time()
-
-                result = vision_processor.extract_assets(page_data)
-                page_data.extracted_assets = result.extracted_assets
-
-                processing_time = time.time() - start_time
-                typer.echo(f"✓ Asset extraction completed in {processing_time:.2f} seconds")
-                typer.echo(f"  - Assets extracted: {len(page_data.extracted_assets) if page_data.extracted_assets else 0}")
-
-        if stage in ["markdown", "all"]:
-            if not page_data.page_structure:
-                typer.echo("Skipping markdown generation: structure analysis not run.")
-            else:
-                typer.echo("Running Markdown generation...")
-                start_time = time.time()
-
-                result = vision_processor.generate_markdown(page_data)
-                page_data.markdown_content = result.markdown_content
-
-                processing_time = time.time() - start_time
-                typer.echo(f"✓ Markdown generation completed in {processing_time:.2f} seconds")
-
-                if page_data.markdown_content:
-                    content_length = len(page_data.markdown_content)
-                    typer.echo(f"  - Markdown content: {content_length} characters")
-
-                    if debug:
-                        typer.echo("\nGenerated Markdown (first 200 characters):")
-                        typer.echo(page_data.markdown_content[:200] + "...")
-
-        # Show processing stats
-        stats = vision_processor.get_processing_stats()
-        if debug and stats['ollama_stats']['total_requests'] > 0:
-            ollama_stats = stats['ollama_stats']
-            typer.echo(f"\nProcessing statistics:")
-            typer.echo(f"  - Total AI requests: {ollama_stats['total_requests']}")
-            typer.echo(f"  - Total processing time: {ollama_stats['total_processing_time']:.2f}s")
-            typer.echo(f"  - Average processing time: {ollama_stats['average_processing_time']:.2f}s")
-
-        typer.echo("\nAI processing test completed successfully!")
-
-    except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
-        if debug:
-            import traceback
-            typer.echo(traceback.format_exc())
-        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()

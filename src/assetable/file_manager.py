@@ -7,16 +7,14 @@ file persistence, and state tracking for the entire pipeline.
 """
 
 import json
-import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 from pydantic import ValidationError
 
 from .config import AssetableConfig, get_config
 from .models import (
-    AssetType,
     DocumentData,
     PageData,
     PageStructure,
@@ -143,10 +141,10 @@ class FileManager:
                     ]
                 )
 
-            return False
-
         except Exception:
-            return False
+            pass
+
+        return False
 
     def get_completed_pages(self, pdf_path: Path, stage: ProcessingStage) -> List[int]:
         """
@@ -159,7 +157,7 @@ class FileManager:
         Returns:
             List of page numbers that have completed the stage.
         """
-        completed_pages = []
+        completed_pages: List[int] = []
 
         # Check each possible page (assume reasonable maximum)
         for page_num in range(1, 1000):  # Check up to 999 pages
@@ -184,7 +182,7 @@ class FileManager:
         Returns:
             List of page numbers that need to complete the stage.
         """
-        pending_pages = []
+        pending_pages: List[int] = []
 
         for page_num in range(1, total_pages + 1):
             if not self.is_stage_completed(pdf_path, page_num, stage):
@@ -207,8 +205,8 @@ class FileManager:
         Raises:
             FileOperationError: If save operation fails.
         """
+        structure_path = self.config.get_structure_json_path(pdf_path, page_number)
         try:
-            structure_path = self.config.get_structure_json_path(pdf_path, page_number)
             structure_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Convert to dict with proper serialization
@@ -221,6 +219,8 @@ class FileManager:
             self._log_operation(f"Saved page structure for page {page_number} to {structure_path}")
             return structure_path
 
+        except ValidationError as e:
+            raise FileOperationError(f"Invalid page structure data in {structure_path}: {e}")
         except Exception as e:
             raise FileOperationError(f"Failed to save page structure: {e}")
 
@@ -238,9 +238,8 @@ class FileManager:
         Raises:
             FileOperationError: If load operation fails with invalid data.
         """
+        structure_path = self.config.get_structure_json_path(pdf_path, page_number)
         try:
-            structure_path = self.config.get_structure_json_path(pdf_path, page_number)
-
             if not structure_path.exists():
                 return None
 
@@ -268,9 +267,10 @@ class FileManager:
             FileOperationError: If save operation fails.
         """
         try:
-            # Use a dedicated page data file
-            doc_dir = self.config.get_document_output_dir(page_data.source_pdf)
-            page_data_path = doc_dir / f"page_{page_data.page_number:04d}_data.json"
+            # Save page data to structure directory instead of document root
+            structure_dir = self.config.get_structure_dir(page_data.source_pdf)
+            structure_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+            page_data_path = structure_dir / f"page_{page_data.page_number:04d}_data.json"
 
             # Convert to dict with proper serialization
             data = page_data.model_dump()
@@ -299,10 +299,10 @@ class FileManager:
         Raises:
             FileOperationError: If load operation fails with invalid data.
         """
-        try:
-            doc_dir = self.config.get_document_output_dir(pdf_path)
-            page_data_path = doc_dir / f"page_{page_number:04d}_data.json"
+        structure_dir = self.config.get_structure_dir(pdf_path)
+        page_data_path = structure_dir / f"page_{page_number:04d}_data.json"
 
+        try:
             if not page_data_path.exists():
                 return None
 
@@ -360,10 +360,10 @@ class FileManager:
         Raises:
             FileOperationError: If load operation fails with invalid data.
         """
-        try:
-            doc_dir = self.config.get_document_output_dir(pdf_path)
-            doc_data_path = doc_dir / "document_data.json"
+        doc_dir = self.config.get_document_output_dir(pdf_path)
+        doc_data_path = doc_dir / "document_data.json"
 
+        try:
             if not doc_data_path.exists():
                 return None
 
@@ -397,10 +397,8 @@ class FileManager:
                 return self._save_table_asset(pdf_path, page_number, asset)
             elif isinstance(asset, FigureAsset):
                 return self._save_figure_asset(pdf_path, page_number, asset)
-            elif isinstance(asset, ImageAsset):
+            else:  # ImageAsset
                 return self._save_image_asset(pdf_path, page_number, asset)
-            else:
-                raise FileOperationError(f"Unknown asset type: {type(asset)}")
 
         except Exception as e:
             raise FileOperationError(f"Failed to save asset {asset.name}: {e}")
@@ -541,7 +539,7 @@ class FileManager:
             files_to_check = [
                 self.config.get_structure_json_path(pdf_path, page_number),
                 self.config.get_markdown_path(pdf_path, page_number),
-                self.config.get_document_output_dir(pdf_path) / f"page_{page_number:04d}_data.json",
+                self.config.get_structure_dir(pdf_path) / f"page_{page_number:04d}_data.json",
             ]
 
             for file_path in files_to_check:
@@ -559,7 +557,7 @@ class FileManager:
         except Exception as e:
             self._log_operation(f"Error during cleanup: {e}")
 
-    def get_processing_summary(self, pdf_path: Path, total_pages: int) -> Dict[str, any]:
+    def get_processing_summary(self, pdf_path: Path, total_pages: int) -> Dict[str, Any]:
         """
         Get processing summary for a document.
 
@@ -570,7 +568,7 @@ class FileManager:
         Returns:
             Dictionary containing processing summary.
         """
-        summary = {
+        summary: Dict[str, Any] = {
             "document": pdf_path.name,
             "total_pages": total_pages,
             "stages": {},
@@ -584,12 +582,12 @@ class FileManager:
             ProcessingStage.MARKDOWN_GENERATION,
         ]
 
-        total_progress = 0
+        total_progress = 0.0
         for stage in stages:
             completed = self.get_completed_pages(pdf_path, stage)
             pending = self.get_pending_pages(pdf_path, stage, total_pages)
 
-            stage_progress = len(completed) / total_pages if total_pages > 0 else 0
+            stage_progress = len(completed) / total_pages if total_pages > 0 else 0.0
             total_progress += stage_progress
 
             summary["stages"][stage.value] = {
@@ -600,7 +598,7 @@ class FileManager:
                 "pending_count": len(pending),
             }
 
-        summary["overall_progress"] = total_progress / len(stages) if stages else 0
+        summary["overall_progress"] = total_progress / len(stages) if stages else 0.0
         return summary
 
     def _log_operation(self, message: str) -> None:
@@ -613,7 +611,7 @@ class FileManager:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type: Optional[type], exc_val: Optional[Exception], exc_tb: Optional[Any]) -> None:
         """Context manager exit."""
         # Cleanup or logging can be performed here if needed
         pass

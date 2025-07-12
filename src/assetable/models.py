@@ -95,7 +95,7 @@ class ReferenceType(str, Enum):
 class AssetBase(BaseModel):
     """Base class for all page assets."""
 
-    type: AssetType
+    # 基底クラスでは型アノテーションのみを定義し、デフォルト値は設定しない
     name: str = Field(description="Descriptive name for the asset")
     description: str = Field(description="Detailed description of the asset content")
     bbox: BoundingBox = Field(description="Location of the asset on the page")
@@ -106,7 +106,7 @@ class AssetBase(BaseModel):
         if not v.strip():
             raise ValueError("Asset name cannot be empty")
         # Remove characters that are problematic for filenames
-        invalid_chars = ['/', '\\', ':', '*', '?', '"', '|'] # Removed empty string
+        invalid_chars = ['/', '\\', ':', '*', '?', '"', '|']
         for char in invalid_chars:
             if char in v:
                 raise ValueError(f"Asset name cannot contain '{char}'")
@@ -169,8 +169,7 @@ class PageStructure(BaseModel):
     """
 
     page_number: int = Field(description="Page number (1-based)")
-    has_text: bool = Field(description="Whether the page contains readable text")
-    text_content: Optional[str] = Field(default=None, description="Recognized text content")
+    text_content: Optional[str] = Field(default=None, description="all the recognized text content on the page of the book. no need to contain coordinates.")
 
     # Assets detected on the page
     tables: List[TableAsset] = Field(default_factory=list, description="Tables found on the page")
@@ -304,10 +303,9 @@ class DocumentData(BaseModel):
     """
 
     document_id: str = Field(description="Unique identifier for the document")
-    source_pdf_path: Path = Field(description="Path to the source PDF file") # Changed from source_pdf
+    source_pdf_path: Path = Field(description="Path to the source PDF file")
     output_directory: Path = Field(description="Directory for processed output files")
     pages: List[PageData] = Field(default_factory=list, description="List of page data objects")
-    # total_pages: int = Field(description="Total number of pages in the document") # Removed as it's passed to summary
 
     # Document-level metadata
     title: Optional[str] = Field(default=None, description="Document title")

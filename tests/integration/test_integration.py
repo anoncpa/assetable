@@ -15,7 +15,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import List, Optional
 
-import fitz  # PyMuPDF
 import pytest
 
 from assetable.ai.ollama_client import OllamaClient, OllamaConnectionError

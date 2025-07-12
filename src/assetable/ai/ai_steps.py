@@ -5,15 +5,12 @@ This module implements comprehensive AI processing pipeline steps
 with enhanced error handling, retry logic, and performance monitoring.
 """
 
-import asyncio
-from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from ..ai.vision_processor import EnhancedVisionProcessor, VisionProcessorError
 from ..config import AssetableConfig
-from ..file_manager import FileManager
 from ..models import PageData, ProcessingStage
-from .engine import PipelineStep, PipelineStepError
+from ..pipeline.engine import PipelineStep, PipelineStepError
 
 
 class EnhancedAIStructureAnalysisStep(PipelineStep):
