@@ -54,13 +54,19 @@ class PDFSplitter:
         self.config = config or get_config()
         self.file_manager = FileManager(self.config)
 
-    def split_pdf(self, pdf_path: Path, force_regenerate: bool = False) -> DocumentData:
+    def split_pdf(
+        self,
+        pdf_path: Path,
+        force_regenerate: bool = False,
+        document_data: Optional[DocumentData] = None
+    ) -> DocumentData:
         """
         Split PDF into individual page images.
 
         Args:
             pdf_path: Path to the PDF file.
             force_regenerate: If True, regenerate images even if they exist.
+            document_data: Optional existing DocumentData object to update.
 
         Returns:
             DocumentData object containing processing results.
@@ -87,8 +93,9 @@ class PDFSplitter:
             # Setup output directory structure
             self.file_manager.setup_document_structure(pdf_path)
 
-            # Create or load document data
-            document_data = self._create_document_data(pdf_path, total_pages)
+            # Use existing document data or create a new one
+            if document_data is None:
+                document_data = self._create_document_data(pdf_path, total_pages)
 
             # Process each page
             processed_pages = []

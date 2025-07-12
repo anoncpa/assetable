@@ -8,9 +8,19 @@ import typer
 from pathlib import Path
 from typing import Optional
 
-from .config import AssetableConfig, get_config
+from .config import AssetableConfig, get_config, ProcessingStage
 from .pipeline.pdf_splitter import split_pdf_cli, PDFSplitter
 from .file_manager import FileManager
+from .pipeline.engine import (
+    PipelineEngine,
+    PDFSplitStep,
+    StructureAnalysisStep,
+    AssetExtractionStep,
+    MarkdownGenerationStep,
+    run_pipeline,
+    run_single_step,
+)
+import asyncio
 
 app = typer.Typer(
     name="assetable",
@@ -277,6 +287,221 @@ def cleanup(
 
     except Exception as e:
         typer.echo(f"Error during cleanup: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def pipeline(
+    pdf_path: str = typer.Argument(..., help="Path to the PDF file to process"),
+    stages: Optional[str] = typer.Option(None, "--stages", "-s",
+                                       help="Comma-separated list of stages to run (split,structure,extraction,markdown)"),
+    pages: Optional[str] = typer.Option(None, "--pages", "-p",
+                                      help="Comma-separated list of page numbers to process"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing of existing files"),
+    output_dir: Optional[str] = typer.Option(None, "--output", "-o", help="Output directory"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Run the complete processing pipeline.
+
+    This command executes the full pipeline from PDF splitting to Markdown generation.
+    You can specify which stages to run and which pages to process.
+
+    Examples:
+        assetable pipeline input/book.pdf
+        assetable pipeline input/book.pdf --stages split,structure
+        assetable pipeline input/book.pdf --pages 1,2,3 --force
+        assetable pipeline input/book.pdf --output custom_output --debug
+    """
+    # Validate input
+    pdf_file = Path(pdf_path)
+    if not pdf_file.exists():
+        typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
+        raise typer.Exit(1)
+
+    # Setup configuration
+    config = get_config()
+
+    if output_dir is not None:
+        config.output.output_directory = Path(output_dir)
+
+    if debug:
+        config.processing.debug_mode = True
+
+    if force:
+        config.processing.skip_existing_files = False
+
+    # Parse stages
+    target_stages = None
+    if stages:
+        stage_mapping = {
+            "split": ProcessingStage.PDF_SPLIT,
+            "structure": ProcessingStage.STRUCTURE_ANALYSIS,
+            "extraction": ProcessingStage.ASSET_EXTRACTION,
+            "markdown": ProcessingStage.MARKDOWN_GENERATION,
+        }
+
+        stage_names = [s.strip() for s in stages.split(",")]
+        target_stages = []
+
+        for stage_name in stage_names:
+            if stage_name not in stage_mapping:
+                typer.echo(f"Error: Unknown stage '{stage_name}'. Available: {', '.join(stage_mapping.keys())}", err=True)
+                raise typer.Exit(1)
+            target_stages.append(stage_mapping[stage_name])
+
+    # Parse page numbers
+    page_numbers = None
+    if pages:
+        try:
+            page_numbers = [int(p.strip()) for p in pages.split(",")]
+        except ValueError:
+            typer.echo("Error: Invalid page numbers format. Use comma-separated integers.", err=True)
+            raise typer.Exit(1)
+
+    try:
+        # Create pipeline engine
+        engine = PipelineEngine(config)
+
+        # Get initial status
+        initial_status = engine.get_pipeline_status(pdf_file)
+
+        if initial_status.get("status") == "not_started":
+            typer.echo(f"Starting pipeline for {pdf_file.name}")
+        else:
+            typer.echo(f"Resuming pipeline for {pdf_file.name}")
+            typer.echo(f"Current progress: {initial_status.get('overall_progress', 0):.1%}")
+
+        typer.echo("")
+
+        # Run pipeline
+        async def run_async():
+            return await engine.execute_pipeline(pdf_file, target_stages, page_numbers)
+
+        # Execute pipeline
+        with typer.progressbar(length=100, label="Processing") as progress:
+            # Note: For now, we'll run the pipeline and update progress at the end
+            # In a more sophisticated implementation, we could update progress in real-time
+            document_data = asyncio.run(run_async())
+            progress.update(100)
+
+        # Display results
+        final_status = engine.get_pipeline_status(pdf_file)
+
+        typer.echo(f"\nPipeline completed!")
+        typer.echo(f"Total pages: {document_data.total_pages}")
+        typer.echo(f"Overall progress: {final_status.get('overall_progress', 0):.1%}")
+
+        # Show step details
+        if final_status.get("steps"):
+            typer.echo("\nStep Details:")
+            for step_info in final_status["steps"]:
+                typer.echo(f"  {step_info['name']}: {step_info['progress']:.1%} "
+                          f"({step_info['completed_pages']}/{step_info['completed_pages'] + step_info['pending_pages']} pages)")
+
+        # Show execution stats
+        if engine.execution_stats and debug:
+            typer.echo(f"\nExecution Statistics:")
+            stats = engine.execution_stats
+            typer.echo(f"  Execution time: {stats.get('execution_time_seconds', 0):.1f} seconds")
+            typer.echo(f"  Steps executed: {', '.join(stats.get('steps_executed', []))}")
+
+            if stats.get('errors'):
+                typer.echo(f"  Errors: {len(stats['errors'])}")
+                for error in stats['errors'][:3]:  # Show first 3 errors
+                    typer.echo(f"    - {error}")
+
+        output_dir_path = config.get_document_output_dir(pdf_file)
+        typer.echo(f"Output directory: {output_dir_path}")
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def run_step(
+    pdf_path: str = typer.Argument(..., help="Path to the PDF file to process"),
+    step: str = typer.Argument(..., help="Step to run (split, structure, extraction, markdown)"),
+    pages: Optional[str] = typer.Option(None, "--pages", "-p",
+                                      help="Comma-separated list of page numbers to process"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing of existing files"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Run a single pipeline step.
+
+    This command executes only the specified processing step.
+    Useful for debugging or reprocessing specific stages.
+
+    Examples:
+        assetable run-step input/book.pdf split
+        assetable run-step input/book.pdf structure --pages 1,2,3
+        assetable run-step input/book.pdf markdown --force --debug
+    """
+    # Validate input
+    pdf_file = Path(pdf_path)
+    if not pdf_file.exists():
+        typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
+        raise typer.Exit(1)
+
+    # Map step names to classes
+    step_mapping = {
+        "split": PDFSplitStep,
+        "structure": StructureAnalysisStep,
+        "extraction": AssetExtractionStep,
+        "markdown": MarkdownGenerationStep,
+    }
+
+    if step not in step_mapping:
+        typer.echo(f"Error: Unknown step '{step}'. Available: {', '.join(step_mapping.keys())}", err=True)
+        raise typer.Exit(1)
+
+    step_class = step_mapping[step]
+
+    # Setup configuration
+    config = get_config()
+
+    if debug:
+        config.processing.debug_mode = True
+
+    if force:
+        config.processing.skip_existing_files = False
+
+    # Parse page numbers
+    page_numbers = None
+    if pages:
+        try:
+            page_numbers = [int(p.strip()) for p in pages.split(",")]
+        except ValueError:
+            typer.echo("Error: Invalid page numbers format. Use comma-separated integers.", err=True)
+            raise typer.Exit(1)
+
+    try:
+        # Run single step
+        typer.echo(f"Running {step} step for {pdf_file.name}")
+
+        async def run_async():
+            return await run_single_step(pdf_file, step_class, config, page_numbers)
+
+        document_data = asyncio.run(run_async())
+
+        typer.echo(f"Step '{step}' completed successfully!")
+        typer.echo(f"Processed {len(document_data.pages)} pages")
+
+        # Show step status
+        engine = PipelineEngine(config)
+        status = engine.get_pipeline_status(pdf_file)
+
+        if status.get("steps"):
+            for step_info in status["steps"]:
+                if step_info["name"].lower().replace(" ", "") == step.replace("_", ""):
+                    typer.echo(f"Progress: {step_info['progress']:.1%} "
+                              f"({step_info['completed_pages']}/{step_info['completed_pages'] + step_info['pending_pages']} pages)")
+                    break
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
 
