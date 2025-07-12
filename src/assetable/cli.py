@@ -14,13 +14,18 @@ from .file_manager import FileManager
 from .pipeline.engine import (
     PipelineEngine,
     PDFSplitStep,
-    StructureAnalysisStep,
-    AssetExtractionStep,
-    MarkdownGenerationStep,
     run_pipeline,
     run_single_step,
 )
+from .ai.ollama_client import OllamaClient
+from .ai.vision_processor import VisionProcessor, VisionProcessorError
+from .pipeline.ai_steps import (
+    AIStructureAnalysisStep,
+    AIAssetExtractionStep,
+    AIMarkdownGenerationStep,
+)
 import asyncio
+import time
 
 app = typer.Typer(
     name="assetable",
@@ -448,9 +453,9 @@ def run_step(
     # Map step names to classes
     step_mapping = {
         "split": PDFSplitStep,
-        "structure": StructureAnalysisStep,
-        "extraction": AssetExtractionStep,
-        "markdown": MarkdownGenerationStep,
+        "structure": AIStructureAnalysisStep,
+        "extraction": AIAssetExtractionStep,
+        "markdown": AIMarkdownGenerationStep,
     }
 
     if step not in step_mapping:
@@ -504,6 +509,213 @@ def run_step(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+
+@app.command()
+def check_ai(
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Check AI system status and available models.
+
+    This command verifies that Ollama is running and shows available models
+    for document processing.
+    """
+    # Setup configuration
+    config = get_config()
+    if debug:
+        config.processing.debug_mode = True
+
+    try:
+        # Check Ollama connection
+        ollama_client = OllamaClient(config)
+
+        typer.echo("Checking AI system status...")
+        typer.echo(f"Ollama host: {config.ai.ollama_host}")
+
+        # Test connection
+        if ollama_client.check_connection():
+            typer.echo("✓ Ollama connection: OK")
+        else:
+            typer.echo("✗ Ollama connection: FAILED")
+            typer.echo("Please ensure Ollama is running and accessible.")
+            raise typer.Exit(1)
+
+        # Get available models
+        try:
+            models = ollama_client.get_available_models()
+            typer.echo(f"✓ Available models: {len(models)}")
+
+            if models:
+                typer.echo("\nInstalled models:")
+                for model in models:
+                    typer.echo(f"  - {model}")
+            else:
+                typer.echo("No models found. You may need to pull vision models first.")
+
+            # Check configured models
+            typer.echo(f"\nConfigured models:")
+            typer.echo(f"  Structure analysis: {config.ai.structure_analysis_model}")
+            typer.echo(f"  Asset extraction: {config.ai.asset_extraction_model}")
+            typer.echo(f"  Markdown generation: {config.ai.markdown_generation_model}")
+
+            # Verify configured models are available
+            missing_models = []
+            for model_name in [config.ai.structure_analysis_model,
+                               config.ai.asset_extraction_model,
+                               config.ai.markdown_generation_model]:
+                if model_name not in models:
+                    missing_models.append(model_name)
+
+            if missing_models:
+                typer.echo(f"\n⚠ Missing models: {', '.join(missing_models)}")
+                typer.echo("Run 'ollama pull <model_name>' to install missing models.")
+            else:
+                typer.echo("✓ All configured models are available")
+
+        except Exception as e:
+            typer.echo(f"✗ Model check failed: {e}")
+            raise typer.Exit(1)
+
+        # Get processing stats if available
+        stats = ollama_client.get_processing_stats()
+        if stats['total_requests'] > 0:
+            typer.echo(f"\nProcessing statistics:")
+            typer.echo(f"  Total requests: {stats['total_requests']}")
+            typer.echo(f"  Total processing time: {stats['total_processing_time']:.2f} seconds")
+            typer.echo(f"  Average processing time: {stats['average_processing_time']:.2f} seconds")
+
+        typer.echo("\nAI system check completed successfully!")
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@app.command()
+def test_ai(
+    pdf_path: str = typer.Argument(..., help="Path to PDF file for testing"),
+    page: int = typer.Option(1, "--page", "-p", help="Page number to test"),
+    stage: str = typer.Option("structure", "--stage", "-s",
+                             help="Stage to test (structure, extraction, markdown, all)"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Test AI processing on a single page.
+
+    This command tests the AI processing pipeline on a single page
+    to verify functionality and performance.
+    """
+    # Validate input
+    pdf_file = Path(pdf_path)
+    if not pdf_file.exists():
+        typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
+        raise typer.Exit(1)
+
+    # Setup configuration
+    config = get_config()
+    if debug:
+        config.processing.debug_mode = True
+
+    try:
+        # Initialize vision processor
+        typer.echo("Initializing AI system...")
+        vision_processor = VisionProcessor(config)
+
+        # Create temporary page data for testing
+        from .models import PageData
+        from .file_manager import FileManager
+
+        file_manager = FileManager(config)
+
+        # Ensure page image exists (run PDF split if needed)
+        image_path = config.get_page_image_path(pdf_file, page)
+        if not image_path.exists():
+            typer.echo(f"Page image not found. Running PDF split first...")
+            from .pipeline.pdf_splitter import PDFSplitter
+            splitter = PDFSplitter(config)
+            # We need to create a document data object to pass to split_pdf
+            from .models import DocumentData
+            doc_data = DocumentData(document_id=pdf_file.stem, source_pdf_path=pdf_file, output_directory=config.get_document_output_dir(pdf_file))
+            splitter.split_pdf(pdf_file, document_data=doc_data)
+
+        # Create page data
+        page_data = PageData(
+            page_number=page,
+            source_pdf=pdf_file,
+            image_path=image_path
+        )
+
+        typer.echo(f"Testing AI processing on page {page}...")
+
+        if stage in ["structure", "all"]:
+            typer.echo("Running structure analysis...")
+            start_time = time.time()
+
+            result = vision_processor.analyze_page_structure(page_data)
+            page_data.page_structure = result.page_structure
+
+            processing_time = time.time() - start_time
+            typer.echo(f"✓ Structure analysis completed in {processing_time:.2f} seconds")
+
+            if page_data.page_structure:
+                typer.echo(f"  - Text detected: {page_data.page_structure.has_text}")
+                typer.echo(f"  - Tables found: {len(page_data.page_structure.tables) if page_data.page_structure.tables else 0}")
+                typer.echo(f"  - Figures found: {len(page_data.page_structure.figures) if page_data.page_structure.figures else 0}")
+                typer.echo(f"  - Images found: {len(page_data.page_structure.images) if page_data.page_structure.images else 0}")
+                typer.echo(f"  - References found: {len(page_data.page_structure.references) if page_data.page_structure.references else 0}")
+
+        if stage in ["extraction", "all"]:
+            if not page_data.page_structure:
+                typer.echo("Skipping extraction: structure analysis not run.")
+            else:
+                typer.echo("Running asset extraction...")
+                start_time = time.time()
+
+                result = vision_processor.extract_assets(page_data)
+                page_data.extracted_assets = result.extracted_assets
+
+                processing_time = time.time() - start_time
+                typer.echo(f"✓ Asset extraction completed in {processing_time:.2f} seconds")
+                typer.echo(f"  - Assets extracted: {len(page_data.extracted_assets) if page_data.extracted_assets else 0}")
+
+        if stage in ["markdown", "all"]:
+            if not page_data.page_structure:
+                typer.echo("Skipping markdown generation: structure analysis not run.")
+            else:
+                typer.echo("Running Markdown generation...")
+                start_time = time.time()
+
+                result = vision_processor.generate_markdown(page_data)
+                page_data.markdown_content = result.markdown_content
+
+                processing_time = time.time() - start_time
+                typer.echo(f"✓ Markdown generation completed in {processing_time:.2f} seconds")
+
+                if page_data.markdown_content:
+                    content_length = len(page_data.markdown_content)
+                    typer.echo(f"  - Markdown content: {content_length} characters")
+
+                    if debug:
+                        typer.echo("\nGenerated Markdown (first 200 characters):")
+                        typer.echo(page_data.markdown_content[:200] + "...")
+
+        # Show processing stats
+        stats = vision_processor.get_processing_stats()
+        if debug and stats['ollama_stats']['total_requests'] > 0:
+            ollama_stats = stats['ollama_stats']
+            typer.echo(f"\nProcessing statistics:")
+            typer.echo(f"  - Total AI requests: {ollama_stats['total_requests']}")
+            typer.echo(f"  - Total processing time: {ollama_stats['total_processing_time']:.2f}s")
+            typer.echo(f"  - Average processing time: {ollama_stats['average_processing_time']:.2f}s")
+
+        typer.echo("\nAI processing test completed successfully!")
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        if debug:
+            import traceback
+            typer.echo(traceback.format_exc())
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()
