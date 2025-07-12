@@ -19,6 +19,13 @@ from ..file_manager import FileManager
 from ..models import DocumentData, PageData, ProcessingStage, PageStructure
 from .pdf_splitter import PDFSplitter
 
+# These are imported later to avoid circular dependencies
+# from .ai_steps import (
+#     AIStructureAnalysisStep,
+#     AIAssetExtractionStep,
+#     AIMarkdownGenerationStep,
+# )
+
 
 class PipelineError(Exception):
     """Base exception for pipeline operations."""
@@ -204,93 +211,6 @@ class PDFSplitStep(PipelineStep):
             raise PipelineStepError(f"PDF splitting failed: {e}") from e
 
 
-class StructureAnalysisStep(PipelineStep):
-    """Pipeline step for structure analysis (placeholder for now)."""
-
-    @property
-    def step_name(self) -> str:
-        return "Structure Analysis"
-
-    @property
-    def processing_stage(self) -> ProcessingStage:
-        return ProcessingStage.STRUCTURE_ANALYSIS
-
-    @property
-    def dependencies(self) -> List[ProcessingStage]:
-        return [ProcessingStage.PDF_SPLIT]
-
-    async def execute_page(self, page_data: PageData) -> PageData:
-        """Execute structure analysis for a single page."""
-        # TODO: Implement AI-based structure analysis
-        # For now, just mark as completed
-        page_data.mark_stage_completed(self.processing_stage)
-        page_data.add_log(f"{self.step_name} completed (placeholder)")
-
-        # Create placeholder file for FileManager.is_stage_completed
-        # This needs to be a valid PageStructure object for is_stage_completed to pass for asset_extraction
-        page_structure = PageStructure(page_number=page_data.page_number, has_text=False)
-        structure_path = self.file_manager.save_page_structure(page_data.source_pdf, page_data.page_number, page_structure)
-        page_data.structure_json_path = structure_path
-
-        return page_data
-
-
-class AssetExtractionStep(PipelineStep):
-    """Pipeline step for asset extraction (placeholder for now)."""
-
-    @property
-    def step_name(self) -> str:
-        return "Asset Extraction"
-
-    @property
-    def processing_stage(self) -> ProcessingStage:
-        return ProcessingStage.ASSET_EXTRACTION
-
-    @property
-    def dependencies(self) -> List[ProcessingStage]:
-        return [ProcessingStage.STRUCTURE_ANALYSIS]
-
-    async def execute_page(self, page_data: PageData) -> PageData:
-        """Execute asset extraction for a single page."""
-        # TODO: Implement AI-based asset extraction
-        # For now, just mark as completed
-        page_data.mark_stage_completed(self.processing_stage)
-        page_data.add_log(f"{self.step_name} completed (placeholder)")
-
-        # Create placeholder file for FileManager.is_stage_completed
-        markdown_path = self.config.get_markdown_path(page_data.source_pdf, page_data.page_number)
-        markdown_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(markdown_path, 'w') as f:
-            f.write("# Placeholder Markdown")
-        page_data.markdown_path = markdown_path
-
-        return page_data
-
-
-class MarkdownGenerationStep(PipelineStep):
-    """Pipeline step for Markdown generation (placeholder for now)."""
-
-    @property
-    def step_name(self) -> str:
-        return "Markdown Generation"
-
-    @property
-    def processing_stage(self) -> ProcessingStage:
-        return ProcessingStage.MARKDOWN_GENERATION
-
-    @property
-    def dependencies(self) -> List[ProcessingStage]:
-        return [ProcessingStage.ASSET_EXTRACTION]
-
-    async def execute_page(self, page_data: PageData) -> PageData:
-        """Execute Markdown generation for a single page."""
-        # TODO: Implement AI-based Markdown generation
-        # For now, just mark as completed
-        page_data.mark_stage_completed(self.processing_stage)
-        page_data.add_log(f"{self.step_name} completed (placeholder)")
-        return page_data
-
-
 class PipelineEngine:
     """
     Main pipeline execution engine.
@@ -305,11 +225,16 @@ class PipelineEngine:
         self.file_manager = FileManager(self.config)
 
         # Define default pipeline steps
+        from .ai_steps import (
+            AIStructureAnalysisStep,
+            AIAssetExtractionStep,
+            AIMarkdownGenerationStep,
+        )
         self.steps: List[PipelineStep] = [
             PDFSplitStep(self.config),
-            StructureAnalysisStep(self.config),
-            AssetExtractionStep(self.config),
-            MarkdownGenerationStep(self.config),
+            AIStructureAnalysisStep(self.config),
+            AIAssetExtractionStep(self.config),
+            AIMarkdownGenerationStep(self.config),
         ]
 
         # Execution state
