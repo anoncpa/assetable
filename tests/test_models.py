@@ -64,7 +64,9 @@ class TestBoundingBox:
         invalid_coordinates = [100, 200, 300]  # Only 3 coordinates
 
         # Act & Assert
-        with pytest.raises(ValueError, match="must have exactly 4 coordinates"):
+        # Pydantic V2 raises pydantic_core.ValidationError and the message is different
+        from pydantic_core import ValidationError
+        with pytest.raises(ValidationError, match="List should have at least 4 items after validation, not 3"):
             BoundingBox(bbox_2d=invalid_coordinates)
 
 

@@ -9,9 +9,9 @@ a single PageData object is passed through the pipeline and extended at each sta
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class ProcessingStage(str, Enum):
@@ -33,7 +33,7 @@ class BoundingBox(BaseModel):
 
     bbox_2d: List[int] = Field(min_length=4, max_length=4)
 
-    @validator("bbox_2d")
+    @field_validator("bbox_2d")
     def validate_bbox(cls, v: List[int]) -> List[int]:
         """Validate bounding box coordinates."""
         if len(v) != 4:
@@ -100,13 +100,13 @@ class AssetBase(BaseModel):
     description: str = Field(description="Detailed description of the asset content")
     bbox: BoundingBox = Field(description="Location of the asset on the page")
 
-    @validator("name")
+    @field_validator("name")
     def validate_name(cls, v: str) -> str:
         """Validate asset name format."""
         if not v.strip():
             raise ValueError("Asset name cannot be empty")
         # Remove characters that are problematic for filenames
-        invalid_chars = ['/', '\\', ':', '*', '?', '"', '', '|']
+        invalid_chars = ['/', '\\', ':', '*', '?', '"', '|'] # Removed empty string
         for char in invalid_chars:
             if char in v:
                 raise ValueError(f"Asset name cannot contain '{char}'")
@@ -116,7 +116,7 @@ class AssetBase(BaseModel):
 class TableAsset(AssetBase):
     """Table asset with CSV data."""
 
-    type: AssetType = Field(default=AssetType.TABLE, const=True)
+    type: Literal[AssetType.TABLE] = Field(default=AssetType.TABLE)
     csv_data: Optional[str] = Field(default=None, description="CSV format table data")
     columns: Optional[List[str]] = Field(default=None, description="Column headers")
     rows: Optional[List[List[str]]] = Field(default=None, description="Table rows")
@@ -140,7 +140,7 @@ FigureNode.model_rebuild()
 class FigureAsset(AssetBase):
     """Figure asset with structured JSON data."""
 
-    type: AssetType = Field(default=AssetType.FIGURE, const=True)
+    type: Literal[AssetType.FIGURE] = Field(default=AssetType.FIGURE)
     figure_type: str = Field(description="Type of figure (e.g., 'flowchart', 'diagram', 'chart')")
     structure: Optional[List[FigureNode]] = Field(default=None, description="Structured figure data")
     raw_json: Optional[Dict[str, Any]] = Field(default=None, description="Raw JSON structure")
@@ -149,7 +149,7 @@ class FigureAsset(AssetBase):
 class ImageAsset(AssetBase):
     """Image asset extracted from page."""
 
-    type: AssetType = Field(default=AssetType.IMAGE, const=True)
+    type: Literal[AssetType.IMAGE] = Field(default=AssetType.IMAGE)
     image_path: Optional[Path] = Field(default=None, description="Path to extracted image file")
     image_type: Optional[str] = Field(default=None, description="Type of image content")
 
@@ -193,7 +193,7 @@ class AIInput(BaseModel):
     ocr_text: Optional[str] = Field(default=None, description="Pre-recognized text data")
     page_structure: Optional[PageStructure] = Field(default=None, description="Page structure from previous stage")
 
-    @validator("image_path")
+    @field_validator("image_path")
     def validate_image_path(cls, v: Path) -> Path:
         """Validate image path exists."""
         if not v.exists():

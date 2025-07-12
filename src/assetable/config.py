@@ -7,9 +7,9 @@ All configuration is type-safe and validated.
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class PDFSplitConfig(BaseModel):
@@ -18,7 +18,7 @@ class PDFSplitConfig(BaseModel):
     dpi: int = Field(default=300, description="DPI for image conversion")
     image_format: str = Field(default="png", description="Output image format")
 
-    @validator("dpi")
+    @field_validator("dpi")
     def validate_dpi(cls, v: int) -> int:
         """Validate DPI value."""
         if v < 72:
@@ -27,7 +27,7 @@ class PDFSplitConfig(BaseModel):
             raise ValueError("DPI should not exceed 600 for performance reasons")
         return v
 
-    @validator("image_format")
+    @field_validator("image_format")
     def validate_image_format(cls, v: str) -> str:
         """Validate image format."""
         allowed_formats = ["png", "jpg", "jpeg"]
@@ -64,14 +64,14 @@ class AIConfig(BaseModel):
     temperature: float = Field(default=0.1, description="Temperature for AI model")
     top_p: float = Field(default=0.9, description="Top-p for AI model")
 
-    @validator("temperature")
+    @field_validator("temperature")
     def validate_temperature(cls, v: float) -> float:
         """Validate temperature value."""
         if not 0.0 <= v <= 2.0:
             raise ValueError("Temperature must be between 0.0 and 2.0")
         return v
 
-    @validator("top_p")
+    @field_validator("top_p")
     def validate_top_p(cls, v: float) -> float:
         """Validate top-p value."""
         if not 0.0 <= v <= 1.0:
@@ -99,8 +99,8 @@ class OutputConfig(BaseModel):
     structure_json_pattern: str = Field(default="page_{page:04d}_structure.json", description="Filename pattern for structure JSONs")
     markdown_pattern: str = Field(default="page_{page:04d}.md", description="Filename pattern for markdown files")
 
-    @validator("input_directory", "output_directory", pre=True, always=True)
-    def validate_dirs(cls, v: Path) -> Path:
+    @field_validator("input_directory", "output_directory", mode="before")
+    def validate_dirs(cls, v: Any) -> Path:
         """Validate directory paths."""
         # Convert to absolute path
         absolute_path = Path(v).resolve()
@@ -133,7 +133,7 @@ class ProcessingConfig(BaseModel):
     min_table_rows: int = Field(default=2, description="Minimum rows to consider as table")
     min_figure_elements: int = Field(default=1, description="Minimum elements to consider as figure")
 
-    @validator("max_parallel_pages")
+    @field_validator("max_parallel_pages")
     def validate_parallel_pages(cls, v: int) -> int:
         """Validate parallel processing settings."""
         if v < 1:
