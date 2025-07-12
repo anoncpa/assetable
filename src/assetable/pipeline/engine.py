@@ -224,17 +224,17 @@ class PipelineEngine:
         self.config = config or get_config()
         self.file_manager = FileManager(self.config)
 
-        # Define default pipeline steps
+        # Define pipeline steps with enhanced AI implementation
         from .ai_steps import (
-            AIStructureAnalysisStep,
-            AIAssetExtractionStep,
-            AIMarkdownGenerationStep,
+            EnhancedAIStructureAnalysisStep,
+            EnhancedAIAssetExtractionStep,
+            EnhancedAIMarkdownGenerationStep
         )
         self.steps: List[PipelineStep] = [
             PDFSplitStep(self.config),
-            AIStructureAnalysisStep(self.config),
-            AIAssetExtractionStep(self.config),
-            AIMarkdownGenerationStep(self.config),
+            EnhancedAIStructureAnalysisStep(self.config),
+            EnhancedAIAssetExtractionStep(self.config),
+            EnhancedAIMarkdownGenerationStep(self.config),
         ]
 
         # Execution state

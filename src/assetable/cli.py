@@ -18,14 +18,15 @@ from .pipeline.engine import (
     run_single_step,
 )
 from .ai.ollama_client import OllamaClient
-from .ai.vision_processor import VisionProcessor, VisionProcessorError
+from .ai.vision_processor import EnhancedVisionProcessor
 from .pipeline.ai_steps import (
-    AIStructureAnalysisStep,
-    AIAssetExtractionStep,
-    AIMarkdownGenerationStep,
+    EnhancedAIStructureAnalysisStep,
+    EnhancedAIAssetExtractionStep,
+    EnhancedAIMarkdownGenerationStep,
 )
 import asyncio
 import time
+from .models import PageData
 
 app = typer.Typer(
     name="assetable",
@@ -425,24 +426,27 @@ def pipeline(
 
 
 @app.command()
-def run_step(
-    pdf_path: str = typer.Argument(..., help="Path to the PDF file to process"),
-    step: str = typer.Argument(..., help="Step to run (split, structure, extraction, markdown)"),
-    pages: Optional[str] = typer.Option(None, "--pages", "-p",
-                                      help="Comma-separated list of page numbers to process"),
-    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing of existing files"),
+def analyze(
+    pdf_path: str = typer.Argument(..., help="Path to PDF file for analysis"),
+    page: int = typer.Option(1, "--page", "-p", help="Page number to analyze"),
+    stage: str = typer.Option("structure", "--stage", "-s",
+                             help="Analysis stage (structure, extraction, markdown, all)"),
+    output_dir: Optional[str] = typer.Option(None, "--output", "-o", help="Output directory"),
+    document_type: str = typer.Option("technical book", "--type", "-t",
+                                    help="Document type (technical book, novel, manual, etc.)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
 ) -> None:
     """
-    Run a single pipeline step.
+    Analyze a specific page using AI processing.
 
-    This command executes only the specified processing step.
-    Useful for debugging or reprocessing specific stages.
+    This command runs detailed AI analysis on a single page to help with
+    development and debugging of the AI processing pipeline.
 
     Examples:
-        assetable run-step input/book.pdf split
-        assetable run-step input/book.pdf structure --pages 1,2,3
-        assetable run-step input/book.pdf markdown --force --debug
+        assetable analyze input/book.pdf --page 1 --stage structure
+        assetable analyze input/book.pdf --page 5 --stage all --debug
+        assetable analyze input/book.pdf --page 3 --type "technical manual"
     """
     # Validate input
     pdf_file = Path(pdf_path)
@@ -450,22 +454,11 @@ def run_step(
         typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
         raise typer.Exit(1)
 
-    # Map step names to classes
-    step_mapping = {
-        "split": PDFSplitStep,
-        "structure": AIStructureAnalysisStep,
-        "extraction": AIAssetExtractionStep,
-        "markdown": AIMarkdownGenerationStep,
-    }
-
-    if step not in step_mapping:
-        typer.echo(f"Error: Unknown step '{step}'. Available: {', '.join(step_mapping.keys())}", err=True)
-        raise typer.Exit(1)
-
-    step_class = step_mapping[step]
-
     # Setup configuration
     config = get_config()
+
+    if output_dir is not None:
+        config.output.output_directory = Path(output_dir)
 
     if debug:
         config.processing.debug_mode = True
@@ -473,40 +466,276 @@ def run_step(
     if force:
         config.processing.skip_existing_files = False
 
-    # Parse page numbers
-    page_numbers = None
-    if pages:
-        try:
-            page_numbers = [int(p.strip()) for p in pages.split(",")]
-        except ValueError:
-            typer.echo("Error: Invalid page numbers format. Use comma-separated integers.", err=True)
-            raise typer.Exit(1)
-
     try:
-        # Run single step
-        typer.echo(f"Running {step} step for {pdf_file.name}")
+        # Initialize vision processor
+        typer.echo("Initializing AI system...")
+        vision_processor = EnhancedVisionProcessor(config)
 
-        async def run_async():
-            return await run_single_step(pdf_file, step_class, config, page_numbers)
+        # Ensure page image exists
+        image_path = config.get_page_image_path(pdf_file, page)
+        if not image_path.exists():
+            typer.echo(f"Page image not found. Running PDF split first...")
+            from .pipeline.pdf_splitter import PDFSplitter
+            splitter = PDFSplitter(config)
+            splitter.split_pdf(pdf_file)
 
-        document_data = asyncio.run(run_async())
+        # Create page data
+        page_data = PageData(
+            page_number=page,
+            source_pdf=pdf_file,
+            image_path=image_path
+        )
+        page_data.mark_stage_completed(ProcessingStage.PDF_SPLIT)
 
-        typer.echo(f"Step '{step}' completed successfully!")
-        typer.echo(f"Processed {len(document_data.pages)} pages")
+        typer.echo(f"Analyzing page {page} of {pdf_file.name}")
+        typer.echo(f"Document type: {document_type}")
+        typer.echo(f"Stage: {stage}")
+        typer.echo("")
 
-        # Show step status
-        engine = PipelineEngine(config)
-        status = engine.get_pipeline_status(pdf_file)
+        # Run analysis stages
+        if stage in ["structure", "all"]:
+            typer.echo("🔍 Running structure analysis...")
+            start_time = time.time()
 
-        if status.get("steps"):
-            for step_info in status["steps"]:
-                if step_info["name"].lower().replace(" ", "") == step.replace("_", ""):
-                    typer.echo(f"Progress: {step_info['progress']:.1%} "
-                              f"({step_info['completed_pages']}/{step_info['completed_pages'] + step_info['pending_pages']} pages)")
-                    break
+            result = vision_processor.analyze_page_structure(page_data, document_type)
+
+            if result.success:
+                processing_time = time.time() - start_time
+                page_data.page_structure = result.page_structure
+
+                typer.echo(f"✅ Structure analysis completed in {processing_time:.2f} seconds")
+
+                if page_data.page_structure:
+                    structure = page_data.page_structure
+                    typer.echo(f"   📝 Text detected: {structure.has_text}")
+                    typer.echo(f"   📊 Tables found: {len(structure.tables)}")
+                    typer.echo(f"   📈 Figures found: {len(structure.figures)}")
+                    typer.echo(f"   🖼️  Images found: {len(structure.images)}")
+                    typer.echo(f"   🔗 References found: {len(structure.references)}")
+
+                    if debug and structure.tables:
+                        typer.echo("   Table details:")
+                        for i, table in enumerate(structure.tables, 1):
+                            typer.echo(f"     {i}. {table.name}: {table.description}")
+
+                    if debug and structure.figures:
+                        typer.echo("   Figure details:")
+                        for i, figure in enumerate(structure.figures, 1):
+                            typer.echo(f"     {i}. {figure.name} ({figure.figure_type}): {figure.description}")
+            else:
+                typer.echo(f"❌ Structure analysis failed: {result.error_message}")
+                if stage == "structure":
+                    raise typer.Exit(1)
+
+        if stage in ["extraction", "all"] and page_data.page_structure:
+            typer.echo("🔧 Running asset extraction...")
+            start_time = time.time()
+
+            result = vision_processor.extract_assets(page_data)
+
+            if result.success:
+                processing_time = time.time() - start_time
+                page_data.extracted_assets = result.extracted_assets
+
+                typer.echo(f"✅ Asset extraction completed in {processing_time:.2f} seconds")
+                typer.echo(f"   📦 Assets extracted: {len(page_data.extracted_assets)}")
+
+                if debug and page_data.extracted_assets:
+                    typer.echo("   Asset details:")
+                    for i, asset in enumerate(page_data.extracted_assets, 1):
+                        asset_type = type(asset).__name__.replace("Asset", "")
+                        typer.echo(f"     {i}. {asset_type}: {asset.name}")
+            else:
+                typer.echo(f"❌ Asset extraction failed: {result.error_message}")
+                if stage == "extraction":
+                    raise typer.Exit(1)
+
+        if stage in ["markdown", "all"] and page_data.page_structure:
+            typer.echo("📝 Running Markdown generation...")
+            start_time = time.time()
+
+            result = vision_processor.generate_markdown(page_data, document_type)
+
+            if result.success:
+                processing_time = time.time() - start_time
+                page_data.markdown_content = result.markdown_content
+
+                typer.echo(f"✅ Markdown generation completed in {processing_time:.2f} seconds")
+
+                if page_data.markdown_content:
+                    content_length = len(page_data.markdown_content)
+                    lines = page_data.markdown_content.count('\n') + 1
+                    typer.echo(f"   📄 Generated: {content_length} characters, {lines} lines")
+                    typer.echo(f"   🔗 Asset references: {len(result.asset_references)}")
+
+                    if debug:
+                        typer.echo("\n   Markdown preview (first 300 characters):")
+                        preview = page_data.markdown_content[:300]
+                        if len(page_data.markdown_content) > 300:
+                            preview += "..."
+                        typer.echo(f"   {preview}")
+            else:
+                typer.echo(f"❌ Markdown generation failed: {result.error_message}")
+                if stage == "markdown":
+                    raise typer.Exit(1)
+
+        # Show processing statistics
+        if debug:
+            stats = vision_processor.get_processing_stats()
+            processing_stats = stats['processing_stats']
+
+            typer.echo(f"\n📊 Processing Statistics:")
+            for stage_name, stage_stats in processing_stats.items():
+                if stage_stats['count'] > 0:
+                    typer.echo(f"   {stage_name.replace('_', ' ').title()}:")
+                    typer.echo(f"     Requests: {stage_stats['count']}")
+                    typer.echo(f"     Success rate: {stage_stats['success_rate']:.1%}")
+                    typer.echo(f"     Average time: {stage_stats['average_time']:.2f}s")
+
+        # Save results if any processing was done
+        file_manager = FileManager(config)
+
+        if page_data.page_structure:
+            structure_path = file_manager.save_page_structure(pdf_file, page, page_data.page_structure)
+            typer.echo(f"\n💾 Saved structure to: {structure_path}")
+
+        if page_data.extracted_assets:
+            saved_count = 0
+            for asset in page_data.extracted_assets:
+                try:
+                    asset_path = file_manager.save_asset_file(pdf_file, page, asset)
+                    saved_count += 1
+                except Exception as e:
+                    if debug:
+                        typer.echo(f"   Failed to save {asset.name}: {e}")
+
+            if saved_count > 0:
+                typer.echo(f"💾 Saved {saved_count} assets")
+
+        if page_data.markdown_content:
+            markdown_path = file_manager.save_markdown_content(pdf_file, page, page_data.markdown_content)
+            typer.echo(f"💾 Saved Markdown to: {markdown_path}")
+
+        output_dir = config.get_document_output_dir(pdf_file)
+        typer.echo(f"\n📁 Output directory: {output_dir}")
+        typer.echo("✨ Analysis completed successfully!")
 
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
+        if debug:
+            import traceback
+            typer.echo(traceback.format_exc())
+        raise typer.Exit(1)
+
+
+@app.command()
+def process_single(
+    pdf_path: str = typer.Argument(..., help="Path to PDF file"),
+    page: int = typer.Argument(..., help="Page number to process"),
+    stage: str = typer.Option("all", "--stage", "-s",
+                             help="Processing stage (structure, extraction, markdown, all)"),
+    output_dir: Optional[str] = typer.Option(None, "--output", "-o", help="Output directory"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reprocessing"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Enable debug mode"),
+) -> None:
+    """
+    Process a single page through the AI pipeline.
+
+    This command processes a single page through one or more stages
+    of the AI processing pipeline using the actual pipeline steps.
+
+    Examples:
+        assetable process-single input/book.pdf 1
+        assetable process-single input/book.pdf 5 --stage structure
+        assetable process-single input/book.pdf 3 --force --debug
+    """
+    # Validate input
+    pdf_file = Path(pdf_path)
+    if not pdf_file.exists():
+        typer.echo(f"Error: PDF file not found: {pdf_path}", err=True)
+        raise typer.Exit(1)
+
+    # Setup configuration
+    config = get_config()
+
+    if output_dir is not None:
+        config.output.output_directory = Path(output_dir)
+
+    if debug:
+        config.processing.debug_mode = True
+
+    if force:
+        config.processing.skip_existing_files = False
+
+    try:
+        # Setup file manager
+        file_manager = FileManager(config)
+        file_manager.setup_document_structure(pdf_file)
+
+        # Ensure page image exists
+        image_path = config.get_page_image_path(pdf_file, page)
+        if not image_path.exists():
+            typer.echo(f"Page image not found. Running PDF split first...")
+            from .pipeline.pdf_splitter import PDFSplitter
+            splitter = PDFSplitter(config)
+            splitter.split_pdf(pdf_file)
+
+        # Create initial page data
+        page_data = PageData(
+            page_number=page,
+            source_pdf=pdf_file,
+            image_path=image_path
+        )
+        page_data.mark_stage_completed(ProcessingStage.PDF_SPLIT)
+
+        typer.echo(f"Processing page {page} of {pdf_file.name}")
+        typer.echo(f"Stage: {stage}")
+
+        # Initialize pipeline steps
+        structure_step = EnhancedAIStructureAnalysisStep(config)
+        extraction_step = EnhancedAIAssetExtractionStep(config)
+        markdown_step = EnhancedAIMarkdownGenerationStep(config)
+
+        # Execute stages
+        if stage in ["structure", "all"]:
+            typer.echo("\n🔍 Executing structure analysis step...")
+            page_data = asyncio.run(structure_step.execute_page(page_data))
+            typer.echo("✅ Structure analysis step completed")
+
+        if stage in ["extraction", "all"]:
+            typer.echo("\n🔧 Executing asset extraction step...")
+            page_data = asyncio.run(extraction_step.execute_page(page_data))
+            typer.echo("✅ Asset extraction step completed")
+
+        if stage in ["markdown", "all"]:
+            typer.echo("\n📝 Executing Markdown generation step...")
+            page_data = asyncio.run(markdown_step.execute_page(page_data))
+            typer.echo("✅ Markdown generation step completed")
+
+        # Save final page data
+        file_manager.save_page_data(page_data)
+
+        # Show completion status
+        typer.echo(f"\n📋 Processing Summary:")
+        for stage_enum in [ProcessingStage.PDF_SPLIT, ProcessingStage.STRUCTURE_ANALYSIS,
+                          ProcessingStage.ASSET_EXTRACTION, ProcessingStage.MARKDOWN_GENERATION]:
+            status = "✅" if page_data.is_stage_completed(stage_enum) else "⏳"
+            typer.echo(f"   {status} {stage_enum.value.replace('_', ' ').title()}")
+
+        if debug and page_data.processing_log:
+            typer.echo(f"\n📜 Processing Log:")
+            for log_entry in page_data.processing_log[-5:]:  # Show last 5 entries
+                typer.echo(f"   {log_entry}")
+
+        output_dir = config.get_document_output_dir(pdf_file)
+        typer.echo(f"\n📁 Output directory: {output_dir}")
+        typer.echo("✨ Single page processing completed!")
+
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        if debug:
+            import traceback
+            typer.echo(traceback.format_exc())
         raise typer.Exit(1)
 
 
@@ -619,7 +848,7 @@ def test_ai(
     try:
         # Initialize vision processor
         typer.echo("Initializing AI system...")
-        vision_processor = VisionProcessor(config)
+        vision_processor = EnhancedVisionProcessor(config)
 
         # Create temporary page data for testing
         from .models import PageData
@@ -633,10 +862,7 @@ def test_ai(
             typer.echo(f"Page image not found. Running PDF split first...")
             from .pipeline.pdf_splitter import PDFSplitter
             splitter = PDFSplitter(config)
-            # We need to create a document data object to pass to split_pdf
-            from .models import DocumentData
-            doc_data = DocumentData(document_id=pdf_file.stem, source_pdf_path=pdf_file, output_directory=config.get_document_output_dir(pdf_file))
-            splitter.split_pdf(pdf_file, document_data=doc_data)
+            splitter.split_pdf(pdf_file)
 
         # Create page data
         page_data = PageData(
