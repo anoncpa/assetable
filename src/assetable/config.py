@@ -87,8 +87,8 @@ class OutputConfig(BaseModel):
     output_directory: Path = Field(default=Path("output"), description="Base directory for processed output")
 
     # Subdirectory names
-    pdf_split_subdir: str = Field(default="pdf_split", description="Subdirectory for split page images")
-    structure_subdir: str = Field(default="structure", description="Subdirectory for page structure JSONs")
+    pdf_split_subdir: str = Field(default="pdfSplitted", description="Subdirectory for split page images")
+    structure_subdir: str = Field(default="pageStructure", description="Subdirectory for page structure JSONs")
     markdown_subdir: str = Field(default="markdown", description="Subdirectory for generated markdown files")
     csv_subdir: str = Field(default="csv", description="Subdirectory for extracted CSV tables")
     images_subdir: str = Field(default="images", description="Subdirectory for extracted images")

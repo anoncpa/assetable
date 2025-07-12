@@ -304,9 +304,10 @@ class DocumentData(BaseModel):
     """
 
     document_id: str = Field(description="Unique identifier for the document")
-    source_pdf_path: Path = Field(description="Path to the source PDF file")
+    source_pdf_path: Path = Field(description="Path to the source PDF file") # Changed from source_pdf
     output_directory: Path = Field(description="Directory for processed output files")
     pages: List[PageData] = Field(default_factory=list, description="List of page data objects")
+    # total_pages: int = Field(description="Total number of pages in the document") # Removed as it's passed to summary
 
     # Document-level metadata
     title: Optional[str] = Field(default=None, description="Document title")
