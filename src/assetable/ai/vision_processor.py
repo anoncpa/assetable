@@ -1,34 +1,37 @@
 """
 Vision-based AI processing for Assetable.
 
-This module provides Vision AI processing capabilities using Ollama.
-It implements the three-stage processing approach for page analysis.
+This module provides enhanced Vision AI processing capabilities using Ollama
+with detailed prompt engineering and robust error handling.
 """
 
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ValidationError
 
 from ..config import AssetableConfig, get_config
 from ..models import (
     AIInput,
     AssetExtractionOutput,
     BoundingBox,
-    CrossPageReference,
     FigureAsset,
     ImageAsset,
     MarkdownGenerationOutput,
     PageData,
     PageStructure,
     ProcessingStage,
-    ReferenceType,
     StructureAnalysisOutput,
     TableAsset,
 )
 from .ollama_client import OllamaClient, OllamaError
+from .prompts import (
+    AssetExtractionPrompts,
+    MarkdownGenerationPrompts,
+    StructureAnalysisPrompts,
+)
 
 
 class VisionProcessorError(Exception):
@@ -36,46 +39,90 @@ class VisionProcessorError(Exception):
     pass
 
 
-class VisionProcessor:
-    """
-    Vision-based AI processor for document analysis.
+class ProcessingResult(BaseModel):
+    """Base result class for processing operations."""
 
-    This class implements the three-stage processing approach:
-    1. Structure Analysis: Detect text, images, figures, tables, and cross-page references
-    2. Asset Extraction: Extract and structure figures, tables, and images
-    3. Markdown Generation: Generate complete Markdown with asset links
+    success: bool
+    processing_time: float
+    error_message: Optional[str] = None
+    retry_count: int = 0
+
+
+class StructureAnalysisResult(ProcessingResult):
+    """Result from structure analysis processing."""
+
+    page_structure: Optional[PageStructure] = None
+    model_used: Optional[str] = None
+
+
+class AssetExtractionResult(ProcessingResult):
+    """Result from asset extraction processing."""
+
+    extracted_assets: List[Union[TableAsset, FigureAsset, ImageAsset]] = []
+    model_used: Optional[str] = None
+
+
+class MarkdownGenerationResult(ProcessingResult):
+    """Result from Markdown generation processing."""
+
+    markdown_content: Optional[str] = None
+    asset_references: List[str] = []
+    model_used: Optional[str] = None
+
+
+class EnhancedVisionProcessor:
+    """
+    Enhanced vision processor with detailed prompt engineering and robust processing.
+
+    This class implements the three-stage processing approach with:
+    - Detailed prompt templates
+    - Robust error handling and retry logic
+    - Performance monitoring
+    - Quality validation
     """
 
     def __init__(self, config: Optional[AssetableConfig] = None) -> None:
         """
-        Initialize vision processor.
+        Initialize enhanced vision processor.
 
         Args:
             config: Configuration object. If None, uses global config.
+
+        Raises:
+            VisionProcessorError: If initialization fails.
         """
         self.config = config or get_config()
-        self.ollama_client = OllamaClient(self.config)
 
-        # Verify Ollama connection
+        try:
+            self.ollama_client = OllamaClient(self.config)
+        except Exception as e:
+            raise VisionProcessorError(f"Failed to initialize Ollama client: {e}")
+
+        # Performance tracking
+        self._processing_stats = {
+            'structure_analysis': {'count': 0, 'total_time': 0.0, 'success_count': 0},
+            'asset_extraction': {'count': 0, 'total_time': 0.0, 'success_count': 0},
+            'markdown_generation': {'count': 0, 'total_time': 0.0, 'success_count': 0},
+        }
+
+        # Verify connection
         if not self.ollama_client.check_connection():
             raise VisionProcessorError("Cannot connect to Ollama server")
 
-    def analyze_page_structure(self, page_data: PageData) -> StructureAnalysisOutput:
+    def analyze_page_structure(
+        self,
+        page_data: PageData,
+        document_type: str = "technical book"
+    ) -> StructureAnalysisResult:
         """
-        Perform structure analysis on a page image.
-
-        This is the first stage of processing that identifies:
-        - Text content
-        - Tables (with positions)
-        - Figures (with positions)
-        - Images (with positions)
-        - Cross-page references
+        Perform comprehensive structure analysis on a page image.
 
         Args:
             page_data: Page data containing image path.
+            document_type: Type of document being processed.
 
         Returns:
-            StructureAnalysisOutput containing page structure.
+            StructureAnalysisResult with detailed analysis.
 
         Raises:
             VisionProcessorError: If analysis fails.
@@ -83,64 +130,79 @@ class VisionProcessor:
         if not page_data.image_path or not page_data.image_path.exists():
             raise VisionProcessorError(f"Image file not found for page {page_data.page_number}")
 
+        start_time = time.time()
+        self._processing_stats['structure_analysis']['count'] += 1
+
         try:
-            # Prepare prompt for structure analysis
-            prompt = self._create_structure_analysis_prompt(page_data.page_number)
+            # Create prompts
+            system_prompt, user_prompt = StructureAnalysisPrompts.create_prompt(
+                page_data.page_number,
+                document_type
+            )
 
-            # System prompt for structure analysis
-            system_prompt = """You are a document analysis expert. Analyze the provided page image and identify:
-1. All text content on the page
-2. Tables with their positions and content structure
-3. Figures/diagrams with their positions and types
-4. Images with their positions and content types
-5. Any references to other pages, headings, tables, figures, or images
-
-Provide accurate bounding box coordinates using absolute pixel coordinates.
-Be thorough but precise in your analysis.
-Your output must be a valid JSON that conforms to the PageStructure schema.
-"""
+            if self.config.processing.debug_mode:
+                print(f"Starting structure analysis for page {page_data.page_number}")
+                print(f"Image path: {page_data.image_path}")
 
             # Execute AI request with structured output
-            result = self.ollama_client.chat_with_vision(
+            page_structure = self.ollama_client.chat_with_vision(
                 model=self.config.ai.structure_analysis_model,
-                prompt=prompt,
+                prompt=user_prompt,
                 image_path=page_data.image_path,
                 response_format=PageStructure,
                 system_prompt=system_prompt
             )
 
-            # Validate that result is PageStructure
-            if not isinstance(result, PageStructure):
+            if not isinstance(page_structure, PageStructure):
                 raise VisionProcessorError("Invalid response format from structure analysis")
 
-            # Ensure page number matches
-            result.page_number = page_data.page_number
-            result.ai_model_used = self.config.ai.structure_analysis_model
+            # Validate and update page structure
+            page_structure.page_number = page_data.page_number
+            page_structure.ai_model_used = self.config.ai.structure_analysis_model
 
-            return StructureAnalysisOutput(
-                page_structure=result,
+            # Quality validation
+            self._validate_page_structure(page_structure)
+
+            processing_time = time.time() - start_time
+            self._processing_stats['structure_analysis']['total_time'] += processing_time
+            self._processing_stats['structure_analysis']['success_count'] += 1
+
+            if self.config.processing.debug_mode:
+                print(f"Structure analysis completed in {processing_time:.2f}s")
+                print(f"Found: {len(page_structure.tables)} tables, "
+                      f"{len(page_structure.figures)} figures, "
+                      f"{len(page_structure.images)} images")
+
+            return StructureAnalysisResult(
+                success=True,
+                processing_time=processing_time,
+                page_structure=page_structure,
                 model_used=self.config.ai.structure_analysis_model
             )
 
         except Exception as e:
-            if isinstance(e, VisionProcessorError):
-                raise
-            raise VisionProcessorError(f"Structure analysis failed for page {page_data.page_number}: {e}")
+            processing_time = time.time() - start_time
+            self._processing_stats['structure_analysis']['total_time'] += processing_time
 
-    def extract_assets(self, page_data: PageData) -> AssetExtractionOutput:
+            error_msg = f"Structure analysis failed for page {page_data.page_number}: {e}"
+            if self.config.processing.debug_mode:
+                print(f"Error: {error_msg}")
+
+            return StructureAnalysisResult(
+                success=False,
+                processing_time=processing_time,
+                error_message=error_msg
+            )
+
+    def extract_assets(self, page_data: PageData) -> AssetExtractionResult:
         """
-        Extract and structure assets from a page.
-
-        This is the second stage that processes:
-        - Tables → CSV format
-        - Figures → JSON structure
-        - Images → Metadata and potential cropping
+        Extract and structure assets from a page with detailed processing.
 
         Args:
             page_data: Page data with structure analysis results.
 
         Returns:
-            AssetExtractionOutput containing extracted assets.
+            AssetExtractionResult with extracted assets.
 
         Raises:
             VisionProcessorError: If extraction fails.
@@ -151,51 +213,103 @@ Your output must be a valid JSON that conforms to the PageStructure schema.
         if not page_data.image_path or not page_data.image_path.exists():
             raise VisionProcessorError(f"Image file not found for page {page_data.page_number}")
 
+        start_time = time.time()
+        self._processing_stats['asset_extraction']['count'] += 1
+
         try:
-            extracted_assets: List[Union[TableAsset, FigureAsset, ImageAsset]] = [] # Add type hint
+            extracted_assets = []
+
+            if self.config.processing.debug_mode:
+                print(f"Starting asset extraction for page {page_data.page_number}")
 
             # Extract tables
-            if page_data.page_structure.tables:
-                for table in page_data.page_structure.tables:
-                    extracted_table = self._extract_table_data(page_data.image_path, table)
+            for table in page_data.page_structure.tables:
+                try:
+                    extracted_table = self._extract_table_data(page_data.image_path, table, page_data.page_number)
                     extracted_assets.append(extracted_table)
 
+                    if self.config.processing.debug_mode:
+                        print(f"Extracted table: {table.name}")
+
+                except Exception as e:
+                    if self.config.processing.debug_mode:
+                        print(f"Failed to extract table {table.name}: {e}")
+                    # Continue with other assets
+                    extracted_assets.append(table)  # Keep original without extraction
+
             # Extract figures
-            if page_data.page_structure.figures:
-                for figure in page_data.page_structure.figures:
-                    extracted_figure = self._extract_figure_data(page_data.image_path, figure)
+            for figure in page_data.page_structure.figures:
+                try:
+                    extracted_figure = self._extract_figure_data(page_data.image_path, figure, page_data.page_number)
                     extracted_assets.append(extracted_figure)
 
+                    if self.config.processing.debug_mode:
+                        print(f"Extracted figure: {figure.name}")
+
+                except Exception as e:
+                    if self.config.processing.debug_mode:
+                        print(f"Failed to extract figure {figure.name}: {e}")
+                    # Continue with other assets
+                    extracted_assets.append(figure)  # Keep original without extraction
+
             # Extract images
-            if page_data.page_structure.images:
-                for image in page_data.page_structure.images:
-                    extracted_image = self._extract_image_data(page_data.image_path, image)
+            for image in page_data.page_structure.images:
+                try:
+                    extracted_image = self._extract_image_data(page_data.image_path, image, page_data.page_number)
                     extracted_assets.append(extracted_image)
 
-            return AssetExtractionOutput(
+                    if self.config.processing.debug_mode:
+                        print(f"Extracted image: {image.name}")
+
+                except Exception as e:
+                    if self.config.processing.debug_mode:
+                        print(f"Failed to extract image {image.name}: {e}")
+                    # Continue with other assets
+                    extracted_assets.append(image)  # Keep original without extraction
+
+            processing_time = time.time() - start_time
+            self._processing_stats['asset_extraction']['total_time'] += processing_time
+            self._processing_stats['asset_extraction']['success_count'] += 1
+
+            if self.config.processing.debug_mode:
+                print(f"Asset extraction completed in {processing_time:.2f}s")
+                print(f"Extracted {len(extracted_assets)} assets")
+
+            return AssetExtractionResult(
+                success=True,
+                processing_time=processing_time,
                 extracted_assets=extracted_assets,
                 model_used=self.config.ai.asset_extraction_model
             )
 
         except Exception as e:
-            if isinstance(e, VisionProcessorError):
-                raise
-            raise VisionProcessorError(f"Asset extraction failed for page {page_data.page_number}: {e}")
+            processing_time = time.time() - start_time
+            self._processing_stats['asset_extraction']['total_time'] += processing_time
 
-    def generate_markdown(self, page_data: PageData) -> MarkdownGenerationOutput:
+            error_msg = f"Asset extraction failed for page {page_data.page_number}: {e}"
+            if self.config.processing.debug_mode:
+                print(f"Error: {error_msg}")
+
+            return AssetExtractionResult(
+                success=False,
+                processing_time=processing_time,
+                error_message=error_msg
+            )
+
+    def generate_markdown(
+        self,
+        page_data: PageData,
+        document_type: str = "technical document"
+    ) -> MarkdownGenerationResult:
         """
-        Generate complete Markdown for a page.
-
-        This is the third stage that creates:
-        - Complete Markdown text
-        - Proper asset references and links
-        - Structured headings and content
+        Generate comprehensive Markdown content for a page.
 
         Args:
             page_data: Page data with structure and asset extraction results.
+            document_type: Type of document being processed.
 
         Returns:
-            MarkdownGenerationOutput containing Markdown content.
+            MarkdownGenerationResult with generated content.
 
         Raises:
             VisionProcessorError: If generation fails.
@@ -206,154 +320,101 @@ Your output must be a valid JSON that conforms to the PageStructure schema.
         if not page_data.image_path or not page_data.image_path.exists():
             raise VisionProcessorError(f"Image file not found for page {page_data.page_number}")
 
+        start_time = time.time()
+        self._processing_stats['markdown_generation']['count'] += 1
+
         try:
-            # Prepare prompt for Markdown generation
-            prompt = self._create_markdown_generation_prompt(page_data)
+            if self.config.processing.debug_mode:
+                print(f"Starting Markdown generation for page {page_data.page_number}")
 
-            # System prompt for Markdown generation
-            system_prompt = """You are a document conversion expert. Generate clean, well-structured Markdown content from the page image.
-
-Requirements:
-1. Create proper headings and structure
-2. Convert all text content to Markdown
-3. Reference tables, figures, and images using the provided asset information
-4. Use relative links for assets (e.g., ./csv/table_name.csv, ./figures/figure_name.json)
-5. Maintain reading flow and logical structure
-6. Include any cross-page references found
-
-Output clean, readable Markdown that accurately represents the page content."""
+            # Create prompts with context
+            system_prompt, user_prompt = MarkdownGenerationPrompts.create_prompt(
+                page_data,
+                document_type
+            )
 
             # Execute AI request
             markdown_content = self.ollama_client.chat_with_vision(
                 model=self.config.ai.markdown_generation_model,
-                prompt=prompt,
+                prompt=user_prompt,
                 image_path=page_data.image_path,
                 response_format=None,  # Free-form text output
                 system_prompt=system_prompt
             )
 
-            if not isinstance(markdown_content, str):
-                raise VisionProcessorError("Invalid response format from Markdown generation")
+            if not isinstance(markdown_content, str) or not markdown_content.strip():
+                raise VisionProcessorError("Empty or invalid Markdown content generated")
 
-            # Extract asset references from the generated content
+            # Clean up and validate Markdown content
+            markdown_content = self._clean_markdown_content(markdown_content)
+
+            # Extract asset references
             asset_references = self._extract_asset_references(markdown_content)
 
-            return MarkdownGenerationOutput(
+            processing_time = time.time() - start_time
+            self._processing_stats['markdown_generation']['total_time'] += processing_time
+            self._processing_stats['markdown_generation']['success_count'] += 1
+
+            if self.config.processing.debug_mode:
+                print(f"Markdown generation completed in {processing_time:.2f}s")
+                print(f"Generated {len(markdown_content)} characters")
+                print(f"Found {len(asset_references)} asset references")
+
+            return MarkdownGenerationResult(
+                success=True,
+                processing_time=processing_time,
                 markdown_content=markdown_content,
                 asset_references=asset_references,
                 model_used=self.config.ai.markdown_generation_model
             )
 
         except Exception as e:
-            if isinstance(e, VisionProcessorError):
-                raise
-            raise VisionProcessorError(f"Markdown generation failed for page {page_data.page_number}: {e}")
+            processing_time = time.time() - start_time
+            self._processing_stats['markdown_generation']['total_time'] += processing_time
 
-    def _create_structure_analysis_prompt(self, page_number: int) -> str:
-        """Create prompt for structure analysis."""
-        return f"""Analyze this page image (page {page_number}) and identify all structural elements.
+            error_msg = f"Markdown generation failed for page {page_data.page_number}: {e}"
+            if self.config.processing.debug_mode:
+                print(f"Error: {error_msg}")
 
-Please identify and provide precise information about:
+            return MarkdownGenerationResult(
+                success=False,
+                processing_time=processing_time,
+                error_message=error_msg
+            )
 
-1. **Text Content**: All readable text on the page
-2. **Tables**: Any tabular data with rows and columns
-   - Provide name, description, and precise bounding box coordinates
-3. **Figures**: Diagrams, charts, flowcharts, or conceptual illustrations
-   - Provide name, description, type, and precise bounding box coordinates
-4. **Images**: Photographs, graphics, or other visual elements
-   - Provide name, description, type, and precise bounding box coordinates
-5. **Cross-page References**: Any mentions of other pages, chapters, figures, tables, or headings
-   - Identify reference type (page, heading, table, figure, image)
-   - Provide target page number if mentioned
-   - Include the exact reference text
-
-Use absolute pixel coordinates for all bounding boxes in the format [x1, y1, x2, y2] where:
-- (x1, y1) is the top-left corner
-- (x2, y2) is the bottom-right corner
-
-Your output must be a valid JSON object that conforms to the PageStructure schema.
-Be thorough and accurate in your analysis."""
-
-    def _create_markdown_generation_prompt(self, page_data: PageData) -> str:
-        """Create prompt for Markdown generation."""
-        # Include context from structure analysis
-        context_info = ""
-        if page_data.page_structure:
-            tables_info = f"Tables found: {len(page_data.page_structure.tables) if page_data.page_structure.tables else 0}"
-            figures_info = f"Figures found: {len(page_data.page_structure.figures) if page_data.page_structure.figures else 0}"
-            images_info = f"Images found: {len(page_data.page_structure.images) if page_data.page_structure.images else 0}"
-            context_info = f"\n\nPage structure context:\n- {tables_info}\n- {figures_info}\n- {images_info}"
-
-        # Include asset information if available
-        asset_info = ""
-        if page_data.extracted_assets:
-            asset_names = [asset.name for asset in page_data.extracted_assets]
-            asset_info = f"\n\nAvailable assets: {', '.join(asset_names)}"
-
-        return f"""Convert this page image (page {page_data.page_number}) into clean, well-structured Markdown.
-
-Create complete Markdown content that includes:
-1. Proper headings and text structure
-2. All readable text content
-3. References to tables using: [Table Name](./csv/page_{page_data.page_number:04d}_table_name.csv)
-4. References to figures using: [Figure Name](./figures/page_{page_data.page_number:04d}_figure_name.json)
-5. References to images using: ![Image Description](./images/page_{page_data.page_number:04d}_image_name.jpg)
-6. Any cross-page references found in the content
-
-Focus on readability and maintaining the logical flow of the document.{context_info}{asset_info}"""
-
-    def _extract_table_data(self, image_path: Path, table: TableAsset) -> TableAsset:
-        """Extract detailed table data from image region."""
+    def _extract_table_data(self, image_path: Path, table: TableAsset, page_number: int) -> TableAsset:
+        """Extract detailed table data with enhanced prompts."""
         try:
-            # Prepare prompt for table extraction
-            prompt = f"""Extract the complete data from this table: "{table.name}"
+            system_prompt, user_prompt = AssetExtractionPrompts.create_table_prompt(table, page_number)
 
-Location: {table.bbox.bbox_2d if table.bbox else "Unknown"}
-Description: {table.description}
-
-Please provide:
-1. All table data in CSV format
-2. Clear column headers
-3. All row data accurately transcribed
-
-Output the data as clean CSV that can be directly saved to a file.
-The output should only contain the CSV data, with no extra text or explanations.
-"""
-
-            # Extract table data
             csv_content = self.ollama_client.chat_with_vision(
                 model=self.config.ai.asset_extraction_model,
-                prompt=prompt,
+                prompt=user_prompt,
                 image_path=image_path,
-                response_format=None  # Free-form text for CSV
+                response_format=None,
+                system_prompt=system_prompt
             )
 
             if isinstance(csv_content, str) and csv_content.strip():
-                # Clean up potential markdown code blocks
-                csv_content = csv_content.strip()
-                if csv_content.startswith("```csv"):
-                    csv_content = csv_content[len("```csv"):].strip()
-                if csv_content.startswith("```"):
-                    csv_content = csv_content[len("```"):].strip()
-                if csv_content.endswith("```"):
-                    csv_content = csv_content[:-len("```")].strip()
+                # Clean and validate CSV content
+                csv_content = self._clean_csv_content(csv_content)
 
                 # Parse CSV to extract columns and rows
                 lines = csv_content.strip().split('\n')
                 if lines:
-                    # First line as headers
-                    columns = [col.strip().strip('"') for col in lines[0].split(',')]
-                    # Remaining lines as rows
-                    rows = []
-                    for line in lines[1:]:
-                        if line.strip():
-                            row = [cell.strip().strip('"') for cell in line.split(',')]
-                            rows.append(row)
+                    import csv
+                    import io
 
-                    # Update table with extracted data
-                    table.csv_data = csv_content.strip()
-                    table.columns = columns
-                    table.rows = rows
+                    csv_reader = csv.reader(io.StringIO(csv_content))
+                    rows = list(csv_reader)
+
+                    if rows:
+                        columns = rows[0] if rows else []
+                        data_rows = rows[1:] if len(rows) > 1 else []
+
+                        table.csv_data = csv_content
+                        table.columns = columns
+                        table.rows = data_rows
 
             return table
 
@@ -362,45 +423,30 @@ The output should only contain the CSV data, with no extra text or explanations.
                 print(f"Table extraction failed for {table.name}: {e}")
             return table
 
-    def _extract_figure_data(self, image_path: Path, figure: FigureAsset) -> FigureAsset:
-        """Extract structured figure data from image region."""
+    def _extract_figure_data(self, image_path: Path, figure: FigureAsset, page_number: int) -> FigureAsset:
+        """Extract structured figure data with enhanced prompts."""
         try:
-            # Prepare prompt for figure extraction
-            prompt = f"""Analyze and structure this figure: "{figure.name}"
+            system_prompt, user_prompt = AssetExtractionPrompts.create_figure_prompt(figure, page_number)
 
-Location: {figure.bbox.bbox_2d if figure.bbox else "Unknown"}
-Description: {figure.description}
-Type: {figure.figure_type}
-
-Please provide a structured JSON representation of this figure that includes:
-1. All text elements with their positions
-2. All graphical elements (boxes, arrows, lines, etc.)
-3. Relationships between elements
-4. Overall structure and layout
-
-Create a hierarchical JSON structure that captures the essence and details of this figure.
-Your output must be a valid JSON object that conforms to the FigureStructureResponse schema.
-"""
-
-            # Create response model for figure structure
+            # Define response schema for structured figure data
             class FigureStructureResponse(BaseModel):
-                elements: List[Dict[str, Any]] = Field(description="List of all elements in the figure")
-                relationships: List[Dict[str, Any]] = Field(description="List of relationships between elements")
-                metadata: Dict[str, Any] = Field(description="Metadata about the figure")
+                elements: List[Dict[str, Any]]
+                relationships: List[Dict[str, Any]]
+                layout: Dict[str, Any]
+                metadata: Dict[str, Any]
 
-            # Extract figure structure
             figure_data = self.ollama_client.chat_with_vision(
                 model=self.config.ai.asset_extraction_model,
-                prompt=prompt,
+                prompt=user_prompt,
                 image_path=image_path,
-                response_format=FigureStructureResponse
+                response_format=FigureStructureResponse,
+                system_prompt=system_prompt
             )
 
             if isinstance(figure_data, FigureStructureResponse):
-                # Convert to our format
                 figure.raw_json = figure_data.dict()
 
-                # TODO: Convert to FigureNode structure
+                # TODO: Convert to FigureNode structure in future iterations
                 # For now, store in raw_json format
 
             return figure
@@ -410,18 +456,83 @@ Your output must be a valid JSON object that conforms to the FigureStructureResp
                 print(f"Figure extraction failed for {figure.name}: {e}")
             return figure
 
-    def _extract_image_data(self, image_path: Path, image: ImageAsset) -> ImageAsset:
-        """Extract image metadata and prepare for cropping if needed."""
+    def _extract_image_data(self, image_path: Path, image: ImageAsset, page_number: int) -> ImageAsset:
+        """Extract detailed image metadata and description."""
         try:
-            # For now, just update metadata
-            # Future implementation could include actual image cropping
-            image.image_type = image.image_type or "extracted"
+            system_prompt, user_prompt = AssetExtractionPrompts.create_image_prompt(image, page_number)
+
+            description = self.ollama_client.chat_with_vision(
+                model=self.config.ai.asset_extraction_model,
+                prompt=user_prompt,
+                image_path=image_path,
+                response_format=None,
+                system_prompt=system_prompt
+            )
+
+            if isinstance(description, str) and description.strip():
+                # Update image with enhanced description
+                image.description = description.strip()
+                image.image_type = image.image_type or "analyzed"
+
             return image
 
         except Exception as e:
             if self.config.processing.debug_mode:
                 print(f"Image extraction failed for {image.name}: {e}")
             return image
+
+    def _validate_page_structure(self, page_structure: PageStructure) -> None:
+        """Validate page structure quality."""
+        # Basic validation
+        if page_structure.page_number < 1:
+            raise VisionProcessorError("Invalid page number in structure")
+
+        all_assets = page_structure.tables + page_structure.figures + page_structure.images
+        for asset in all_assets:
+            if not asset.name:
+                raise VisionProcessorError("Asset name is missing")
+
+            if not asset.bbox or len(asset.bbox.bbox_2d) != 4:
+                raise VisionProcessorError(f"Invalid bounding box for {asset.name}")
+
+            bbox = asset.bbox.bbox_2d
+        if page_structure.page_number < 1:
+            raise VisionProcessorError("Invalid page number in structure")
+
+        all_assets = page_structure.tables + page_structure.figures + page_structure.images
+        for asset in all_assets:
+            if not asset.name:
+                raise VisionProcessorError("Asset name is missing")
+
+            if not asset.bbox or len(asset.bbox.bbox_2d) != 4:
+                raise VisionProcessorError(f"Invalid bounding box for {asset.name}")
+
+            bbox = asset.bbox.bbox_2d
+            if bbox[0] >= bbox[2] or bbox[1] >= bbox[3]:
+                raise VisionProcessorError(f"Invalid bounding box coordinates for {asset.name}")
+
+    def _clean_csv_content(self, csv_content: str) -> str:
+        """Clean and validate CSV content."""
+        # Remove any markdown formatting
+        lines = []
+        for line in csv_content.split('\n'):
+            line = line.strip()
+            # Skip empty lines and markdown formatting
+            if line and not line.startswith('```'):
+                lines.append(line)
+
+        return '\n'.join(lines)
+
+    def _clean_markdown_content(self, markdown_content: str) -> str:
+        """Clean and validate Markdown content."""
+        # Remove any extra formatting or artifacts
+        lines = []
+        for line in markdown_content.split('\n'):
+            # Skip lines that look like AI response artifacts
+            if line.strip() and not line.strip().startswith('```') and not line.strip().endswith('```'):
+                lines.append(line)
+
+        return '\n'.join(lines).strip()
 
     def _extract_asset_references(self, markdown_content: str) -> List[str]:
         """Extract asset file references from Markdown content."""
@@ -434,22 +545,49 @@ Your output must be a valid JSON object that conforms to the FigureStructureResp
         image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
 
         for match in re.finditer(link_pattern, markdown_content):
-            references.append(match.group(2))
+            ref_path = match.group(2)
+            if any(ref_path.startswith(f'./{folder}/') for folder in ['csv', 'figures', 'images']):
+                references.append(ref_path)
 
         for match in re.finditer(image_pattern, markdown_content):
-            references.append(match.group(2))
+            ref_path = match.group(2)
+            if any(ref_path.startswith(f'./{folder}/') for folder in ['csv', 'figures', 'images']):
+                references.append(ref_path)
 
-        return references
+        return list(set(references))  # Remove duplicates
 
     def get_processing_stats(self) -> Dict[str, Any]:
-        """Get processing statistics."""
-        ollama_stats = self.ollama_client.get_processing_stats()
+        """Get comprehensive processing statistics."""
+        stats = {'processing_stats': self._processing_stats.copy()}
 
-        return {
-            'ollama_stats': ollama_stats,
-            'models_used': {
-                'structure_analysis': self.config.ai.structure_analysis_model,
-                'asset_extraction': self.config.ai.asset_extraction_model,
-                'markdown_generation': self.config.ai.markdown_generation_model,
-            }
+        # Calculate averages
+        for stage, stage_stats in stats['processing_stats'].items():
+            if stage_stats['count'] > 0:
+                stage_stats['average_time'] = stage_stats['total_time'] / stage_stats['count']
+                stage_stats['success_rate'] = stage_stats['success_count'] / stage_stats['count']
+            else:
+                stage_stats['average_time'] = 0.0
+                stage_stats['success_rate'] = 0.0
+
+        # Add Ollama client stats
+        stats['ollama_stats'] = self.ollama_client.get_processing_stats()
+
+        # Add model configuration
+        stats['models_used'] = {
+            'structure_analysis': self.config.ai.structure_analysis_model,
+            'asset_extraction': self.config.ai.asset_extraction_model,
+            'markdown_generation': self.config.ai.markdown_generation_model,
         }
+
+        return stats
+
+    def reset_stats(self) -> None:
+        """Reset processing statistics."""
+        for stage_stats in self._processing_stats.values():
+            stage_stats.update({'count': 0, 'total_time': 0.0, 'success_count': 0})
+
+        self.ollama_client.reset_stats()
+
+
+# Maintain backward compatibility
+VisionProcessor = EnhancedVisionProcessor
