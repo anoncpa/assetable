@@ -218,7 +218,13 @@ class AssetableConfig(BaseModel):
 
     def get_page_image_path(self, pdf_path: Path, page_number: int) -> Path:
         """Get path for a specific page image."""
-        filename = self.output.page_image_pattern.format(page=page_number)
+        # Use the image_format from pdf_split config to determine the extension
+        extension = self.pdf_split.image_format.lower()
+        if extension == "jpeg": # common alternative for jpg
+            extension = "jpg"
+        # Original pattern might have a hardcoded extension, remove it if present
+        base_pattern = self.output.page_image_pattern.rsplit('.', 1)[0]
+        filename = f"{base_pattern.format(page=page_number)}.{extension}"
         return self.get_pdf_split_dir(pdf_path) / filename
 
     def get_structure_json_path(self, pdf_path: Path, page_number: int) -> Path:

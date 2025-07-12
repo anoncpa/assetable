@@ -2,7 +2,7 @@
 name = "assetable"
 version = "0.1.0"
 description = "Convert scanned books into AI- and human-readable digital assets"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "ollama>=0.5.1",
     "pydantic>=2.11.7",
