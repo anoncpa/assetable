@@ -331,6 +331,7 @@ class FileManager:
         """
         try:
             doc_dir = self.config.get_document_output_dir(document_data.source_pdf_path)
+            doc_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
             doc_data_path = doc_dir / "document_data.json"
 
             # Convert to dict with proper serialization
