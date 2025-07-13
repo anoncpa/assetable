@@ -3,7 +3,7 @@ Pytest configuration and fixtures for assetable tests.
 """
 from pathlib import Path
 import pytest
-from tests.test_integration import TestDocumentCreation
+from tests.integration.test_integration import TestDocumentCreation
 
 
 def pytest_configure(config):

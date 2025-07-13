@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional, cast
 from collections.abc import Callable
 
 from pydantic import BaseModel, Field, field_validator
+from dotenv import load_dotenv
 
 
 
@@ -24,8 +25,6 @@ class PDFSplitConfig(BaseModel):
 
     dpi: int = Field(300, description="DPI for image conversion")
     image_format: str = Field("png", description="Output image format")
-
-    # --- validators --------------------------------------------------------
 
     @field_validator("dpi")
     def _validate_dpi(cls, v: int) -> int:
@@ -66,8 +65,6 @@ class AIConfig(BaseModel):
     temperature: float = Field(0.1, description="Temperature for AI model")
     top_p: float = Field(0.9, description="Top-p for AI model")
 
-    # --- validators --------------------------------------------------------
-
     @field_validator("temperature")
     def _validate_temperature(cls, v: float) -> float:
         if not 0.0 <= v <= 2.0:
@@ -105,8 +102,6 @@ class OutputConfig(BaseModel):
     structure_json_pattern: str = Field("page_{page:04d}_structure.json",
                                         description="Filename pattern for structure JSONs")
     markdown_pattern: str = Field("page_{page:04d}.md", description="Filename pattern for markdown files")
-
-    # --- validators --------------------------------------------------------
 
     @field_validator("input_directory", "output_directory", mode="before")
     def _abs_paths(cls, v: Any) -> Path:
@@ -169,9 +164,9 @@ class AssetableConfig(BaseModel):
 
     version: str = Field(default="0.1.0", description="Assetable version")
 
-    # ---------------------------------------------------------------------
+
     # Environment overrides
-    # ---------------------------------------------------------------------
+
     @classmethod
     def from_env(cls) -> "AssetableConfig":
         cfg = cls()
@@ -202,9 +197,9 @@ class AssetableConfig(BaseModel):
 
         return cfg
 
-    # ---------------------------------------------------------------------
+
     # Helper path getters
-    # ---------------------------------------------------------------------
+
     def get_document_output_dir(self, pdf_path: Path) -> Path:
         return self.output.output_directory / pdf_path.stem
 
@@ -251,9 +246,9 @@ class AssetableConfig(BaseModel):
             return self.get_images_dir(pdf_path) / f"page_{page:04d}_{clean}.jpg"
         raise ValueError(f"Unknown asset type: {asset_type}")
 
-    # ---------------------------------------------------------------------
+
     # I/O helpers
-    # ---------------------------------------------------------------------
+
     def create_output_directories(self, pdf_path: Path) -> None:
         for d in (
             self.get_document_output_dir(pdf_path),
@@ -266,9 +261,9 @@ class AssetableConfig(BaseModel):
         ):
             d.mkdir(parents=True, exist_ok=True)
 
-    # ---------------------------------------------------------------------
+
     # Serialization helpers
-    # ---------------------------------------------------------------------
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert configuration to a plain Python dictionary.
@@ -297,8 +292,6 @@ class AssetableConfig(BaseModel):
 
 
 
-# Global config singleton helpers
-
 
 _config: Optional[AssetableConfig] = None
 
@@ -306,6 +299,8 @@ _config: Optional[AssetableConfig] = None
 def get_config() -> AssetableConfig:
     global _config
     if _config is None:
+        # Load .env file if it exists
+        load_dotenv()
         _config = AssetableConfig.from_env()
     return _config
 

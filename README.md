@@ -6,7 +6,7 @@
 
 - **PDFの分割**: PDFの各ページを高品質な画像ファイル（PNG）に変換します。
 - **AIによる構造分析**: 各ページのレイアウトを分析し、テキスト、図、表などの要素を識別します。
-- **資産の抽出**: ページ内から図や表などの具体的なアセットを抽出します。
+- **ページ要素の抽出**: ページ内から図や表などの要素を抽出します。
 - **Markdown生成**: 分析結果を元に、構造化されたMarkdownファイルを生成します。
 - **パイプライン処理**: 上記の処理をパイプラインとして一括で実行できます。
 
@@ -15,7 +15,7 @@
 リポジトリをクローンし、Poetryを使用して依存関係をインストールします。
 
 ```bash
-git clone https://github.com/your-username/assetable.git
+git clone https://github.com/anoncpa/assetable.git
 cd assetable
 pip install .
 ```
