@@ -125,7 +125,7 @@ class ProcessingConfig(BaseModel):
     min_table_rows: int = Field(2, description="Minimum rows to consider as table")
     min_figure_elements: int = Field(1, description="Minimum elements to consider as figure")
 
-    # --- validators --------------------------------------------------------
+    # validators
 
     @field_validator("max_parallel_pages")
     def _validate_parallel(cls, v: int) -> int:

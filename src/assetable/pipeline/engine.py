@@ -172,9 +172,7 @@ class PipelineEngine:
         self.execution_start_time: Optional[datetime] = None
         self.execution_stats: Dict[str, Any] = {}
 
-    # --------------------------------------------------------------------- #
-    # Public API                                                            #
-    # --------------------------------------------------------------------- #
+    # Public API
     async def execute_pipeline(
         self,
         pdf_path: Path,
@@ -318,9 +316,7 @@ class PipelineEngine:
             "last_updated": datetime.now().isoformat(),
         }
 
-    # --------------------------------------------------------------------- #
-    # Helper methods                                                        #
-    # --------------------------------------------------------------------- #
+    # Helper methods
     def add_step(self, step: PipelineStep) -> None:
         self.steps.append(step)
 
@@ -399,9 +395,7 @@ class PipelineEngine:
         )
 
 
-# ------------------------------------------------------------------------- #
-# Convenience async helpers                                                 #
-# ------------------------------------------------------------------------- #
+# Convenience async helpers
 async def run_pipeline(
     pdf_path: Path,
     config: Optional[AssetableConfig] = None,

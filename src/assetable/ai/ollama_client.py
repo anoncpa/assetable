@@ -279,9 +279,7 @@ class OllamaClient:
 
         raise OllamaError(f"Request failed after {max_retries + 1} attempts: {last_error}") from last_error
 
-    # ---------------------------------------------------------------------
     # Stats helpers
-    # ---------------------------------------------------------------------
 
     def get_processing_stats(self) -> Dict[str, Any]:
         avg = self._total_processing_time / self._request_count if self._request_count else 0.0
