@@ -3,7 +3,7 @@ Pytest configuration and fixtures for assetable tests.
 """
 from pathlib import Path
 import pytest
-from tests.integration.test_integration import TestDocumentCreation
+# from tests.integration.test_integration import TestDocumentCreation
 
 
 def pytest_configure(config):
@@ -51,6 +51,7 @@ def temp_workspace():
 @pytest.fixture(scope="session")
 def sample_pdf_simple(temp_workspace):
     """Create a simple PDF for testing."""
+    from tests.integration.test_integration import TestDocumentCreation
     pdf_path = temp_workspace / "sample_simple.pdf"
     TestDocumentCreation.create_simple_test_pdf(pdf_path, pages=3)
     return pdf_path
@@ -58,6 +59,7 @@ def sample_pdf_simple(temp_workspace):
 @pytest.fixture(scope="session")
 def sample_pdf_complex(temp_workspace):
     """Create a complex PDF for testing."""
+    from tests.integration.test_integration import TestDocumentCreation
     pdf_path = temp_workspace / "sample_complex.pdf"
     TestDocumentCreation.create_complex_test_pdf(pdf_path, num_pages=5)
     return pdf_path
