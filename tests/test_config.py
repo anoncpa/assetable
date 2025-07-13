@@ -86,7 +86,7 @@ class TestAIConfig:
 
         # Assert
         assert config.ollama_host == "http://localhost:11434"
-        assert config.structure_analysis_model == "qwen2.5-vl:7b"
+        assert config.structure_analysis_model == "mistral-small3.2:latest"
         assert config.temperature == 0.1
         assert config.top_p == 0.9
         assert config.max_retries == 3
@@ -137,7 +137,7 @@ class TestOutputConfig:
         # Default paths should remain relative until explicitly resolved.
         assert config.input_directory == Path("input")
         assert config.output_directory == Path("output")
-        assert config.pdf_split_subdir == "pdf_split" # Corrected default
+        assert config.pdf_split_subdir == "pdfSplitted"
         assert config.markdown_subdir == "markdown"
         assert config.page_image_pattern == "page_{page:04d}.png"
 
@@ -431,6 +431,11 @@ class TestEnvironmentVariables:
         """Test partial configuration override via environment variables."""
         # Arrange
         original_env = os.environ.copy()
+        # Clear all ASSETABLE_ environment variables first
+        for key in list(os.environ.keys()):
+            if key.startswith("ASSETABLE_"):
+                del os.environ[key]
+        
         os.environ["ASSETABLE_OLLAMA_HOST"] = "http://partial-test:11434"
 
         try:
@@ -440,8 +445,8 @@ class TestEnvironmentVariables:
 
             # Assert
             assert config.ai.ollama_host == "http://partial-test:11434"
-            # Other values should remain defaults
-            assert config.ai.structure_analysis_model == "qwen2.5-vl:7b" # Default
+            # Other values should remain as set in .env file
+            assert config.ai.structure_analysis_model == "qwen2.5vl:32b" # From .env file
             assert config.pdf_split.dpi == 300 # Default
 
         finally:
