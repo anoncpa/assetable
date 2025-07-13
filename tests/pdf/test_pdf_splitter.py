@@ -39,15 +39,36 @@ class TestPDFCreation:
             pdf_path: Path where to save the PDF.
             num_pages: Number of pages to create.
         """
-        doc = pdfium.PdfDocument.new()
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+        except ImportError:
+            # Fallback: create a minimal PDF manually
+            pdf_content = b"""%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj
+4 0 obj<</Length 44>>stream
+BT/F1 12 Tf 100 700 Td(Test Page)Tj ET
+endstream endobj
+xref 0 5
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000207 00000 n 
+trailer<</Size 5/Root 1 0 R>>startxref 295 %%EOF"""
+            with open(pdf_path, 'wb') as f:
+                f.write(pdf_content)
+            return
+
+        c = canvas.Canvas(str(pdf_path), pagesize=A4)
+        width, height = A4
 
         for page_num in range(num_pages):
-            page = doc.new_page(width=595, height=842)  # A4 size
-
-            # Add some content to the page
+            # Add content to the page
             text = f"This is page {page_num + 1} of {num_pages}"
-            # Note: pypdfium2 has different text insertion API
-            # For test purposes, we'll create a minimal PDF structure
+            c.drawString(100, height - 100, text)
             
             # Add some additional content to make it realistic
             content_lines = [
@@ -58,8 +79,16 @@ class TestPDFCreation:
                 f"Page created at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             ]
 
-        doc.save(str(pdf_path))
-        doc.close()
+            for i, line in enumerate(content_lines):
+                c.drawString(100, height - 150 - i * 20, line)
+
+            # Add a simple rectangle as visual element
+            c.rect(400, height - 450, 100, 50)
+            c.drawString(410, height - 430, "Box")
+
+            c.showPage()
+
+        c.save()
 
     @staticmethod
     def create_corrupted_pdf(pdf_path: Path) -> None:
