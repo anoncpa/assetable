@@ -1,3 +1,4 @@
+
 """
 AI processing prompts for Assetable.
 
@@ -28,39 +29,64 @@ class PromptTemplate(BaseModel):
 class StructureAnalysisPrompts:
     """Prompts for structure analysis stage."""
 
-    SYSTEM_PROMPT = """You are an expert document analyzer specializing in Japanese and English text recognition.
-Your task is to analyze page images from scanned books and identify structural elements with high precision.
+    SYSTEM_PROMPT = """You are a highly specialized AI assistant for document analysis. Your task is to analyze an image of a document page and convert its structure into a precise JSON format.
 
-Requirements:
-- Identify all text content on the page
-- Detect tables, figures, diagrams, and images with accurate bounding boxes
-- Use absolute pixel coordinates [x1, y1, x2, y2] where (x1,y1) is top-left, (x2,y2) is bottom-right
-- Identify cross-page references (page numbers, figure/table references, etc.)
-- Provide descriptive names for all detected elements
-- Be thorough but accurate in your analysis
+**Crucial Instructions:**
+1.  **JSON ONLY:** Your entire response MUST be a single, valid JSON object. Do not include any introductory text, explanations, or code block formatting like ``````. The response must start with `{` and end with `}`.
+2.  **Strict Schema Adherence:** The JSON object must strictly adhere to the output_schema structure.
+3.  **座標系:** すべてのバウンディングボックスは、絶対ピクセル座標 `[x1, y1, x2, y2]` を使用する必要があります。ここで (x1, y1) は左上の角、(x2, y2) は右下の角です。
+4.  **Accuracy:** Be meticulous. Ensure every detected element is accurately represented in the JSON output. If a category (e.g., tables) is empty, provide an empty list `[]`.
+"""
 
-Always respond with valid JSON matching the specified schema."""
+    USER_PROMPT_TEMPLATE = """Analyze the provided image for page {page_number} of a {document_type}.
+Generate a JSON object that describes the page's structure.
+Follow the required schema precisely as detailed in the system prompt.
 
-    USER_PROMPT_TEMPLATE = """Analyze this page image (page {page_number}) and provide a complete structural analysis.
+**JSON Structure Example:**
+```
+{{
+  "page_number": {page_number},
+  "text_content": "A full transcription of all text on the page...",
+  "tables": [
+    {{
+      "name": "Table 1.1: Summary of Results",
+      "description": "A brief summary of what this table contains.",
+      "bbox": {{ "bbox_2d":  }}
+    }}
+  ],
+  "figures": [
+    {{
+      "name": "Figure 2.3: System Architecture",
+      "description": "A diagram showing the main components and their interactions.",
+      "figure_type": "diagram",
+      "bbox": {{ "bbox_2d":  }}
+    }}
+  ],
+  "images": [
+    {{
+      "name": "Image 3.1: Screenshot of UI",
+      "description": "The main user interface of the application.",
+      "image_type": "screenshot",
+      "bbox": {{ "bbox_2d":  }}
+    }}
+  ],
+  "references": [
+    {{
+      "target_page": 42,
+      "reference_text": "see page 42",
+      "reference_type": "page"
+    }}
+  ]
+}}
+```
 
-Please identify:
+**Analysis Task:**
+- Populate the `text_content` field with all readable text from the image.
+- Identify every table, figure, and image. For each, create a corresponding JSON object with `name`, `description`, `bbox`, and any other required fields (`figure_type`, `image_type`).
+- Identify all cross-page references and create corresponding objects in the `references` list with `target_page`, `reference_text`, and `reference_type`.
 
-1. **Text Content**: All readable text on the page
-2. **Tables**: Tabular data with rows and columns
-   - Provide descriptive name, detailed description, and precise bounding box
-3. **Figures**: Diagrams, charts, flowcharts, or conceptual illustrations
-   - Provide descriptive name, detailed description, figure type, and precise bounding box
-4. **Images**: Photographs, graphics, or other visual elements
-   - Provide descriptive name, detailed description, image type, and precise bounding box
-5. **Cross-page References**: Any references to other pages, chapters, figures, tables, or headings
-   - Identify reference type (page, heading, table, figure, image)
-   - Extract target page number if mentioned
-   - Include exact reference text
-
-Use absolute pixel coordinates for bounding boxes in format [x1, y1, x2, y2].
-Be precise and thorough in your analysis.
-
-Context: This is page {page_number} from a {document_type} document."""
+Now, analyze the image and generate the single, valid JSON response.
+"""
 
     @classmethod
     def create_prompt(

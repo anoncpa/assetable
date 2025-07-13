@@ -227,22 +227,21 @@ class TestPageStructure:
         # Act
         structure = PageStructure(
             page_number=page_number,
-            has_text=True,
             text_content=text_content,
             tables=[table],
             figures=[figure],
             references=[reference],
-            ai_model_used="qwen2.5-vl:7b"
+            ai_model_used="mistral-small3.2:latest"
         )
 
         # Assert
         assert structure.page_number == page_number
-        assert structure.has_text is True
+        # has_text attribute has been removed from PageStructure
         assert structure.text_content == text_content
         assert len(structure.tables) == 1
         assert len(structure.figures) == 1
         assert len(structure.references) == 1
-        assert structure.ai_model_used == "qwen2.5-vl:7b"
+        assert structure.ai_model_used == "mistral-small3.2:latest"
         assert isinstance(structure.analysis_timestamp, datetime)
 
 

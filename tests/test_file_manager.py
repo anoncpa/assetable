@@ -301,11 +301,10 @@ class TestPageStructurePersistence:
 
             page_structure = PageStructure(
                 page_number=page_number,
-                has_text=True,
                 text_content="これはテストページです。",
                 tables=[table],
                 references=[reference],
-                ai_model_used="qwen2.5-vl:7b"
+                ai_model_used="mistral-small3.2:latest"
             )
 
             # Act - Save
@@ -321,13 +320,13 @@ class TestPageStructurePersistence:
             # Assert - Data matches
             assert loaded_structure is not None
             assert loaded_structure.page_number == page_number
-            assert loaded_structure.has_text is True
+            # has_text attribute has been removed from PageStructure
             assert loaded_structure.text_content == "これはテストページです。"
             assert len(loaded_structure.tables) == 1
             assert loaded_structure.tables[0].name == "売上テーブル"
             assert len(loaded_structure.references) == 1
             assert loaded_structure.references[0].target_page == 2
-            assert loaded_structure.ai_model_used == "qwen2.5-vl:7b"
+            assert loaded_structure.ai_model_used == "mistral-small3.2:latest"
 
     def test_load_nonexistent_page_structure(self) -> None:
         """Test loading page structure that doesn't exist."""

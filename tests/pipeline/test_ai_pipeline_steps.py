@@ -20,7 +20,7 @@ from assetable.models import (
     ProcessingStage,
     TableAsset,
 )
-from assetable.pipeline.ai_steps import (
+from assetable.ai.ai_steps import (
     AIAssetExtractionStep,
     AIMarkdownGenerationStep,
     AIStructureAnalysisStep,

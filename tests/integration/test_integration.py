@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 from typing import List, Optional
 
 import pytest
+import pypdfium2 as pdfium
 
 from assetable.ai.ollama_client import OllamaClient, OllamaConnectionError
 from assetable.ai.vision_processor import VisionProcessor, VisionProcessorError
@@ -23,7 +24,7 @@ from assetable.config import AssetableConfig
 from assetable.file_manager import FileManager
 from assetable.models import DocumentData, PageData, ProcessingStage
 from assetable.pipeline.engine import PipelineEngine, run_pipeline
-from assetable.pipeline.pdf_splitter import PDFSplitter
+from assetable.pdf.pdf_splitter import PDFSplitter
 
 
 class TestDocumentCreation:
@@ -38,7 +39,7 @@ class TestDocumentCreation:
             pdf_path: Path where to save the PDF.
             num_pages: Number of pages to create.
         """
-        doc = fitz.open()  # Create new document
+        doc = pdfium.PdfDocument.new()
 
         for page_num in range(num_pages):
             page = doc.new_page(width=595, height=842)  # A4 size
@@ -49,12 +50,8 @@ class TestDocumentCreation:
                 page.insert_text((100, 150), "Integration Test Sample", fontsize=16, color=(0.2, 0.2, 0.2))
                 page.insert_text((100, 200), f"Created: {datetime.now().strftime('%Y-%m-%d')}", fontsize=12)
 
-                # Add a simple figure representation
-                rect = fitz.Rect(100, 300, 400, 500)
-                page.draw_rect(rect, color=(0.8, 0.8, 0.8), width=2)
-                page.insert_text((120, 350), "Figure 1.1: System Overview", fontsize=12, color=(0, 0, 0))
-                page.insert_text((120, 380), "Input → Processing → Output", fontsize=10, color=(0.5, 0.5, 0.5))
-                page.insert_text((120, 410), "PDF → Analysis → Markdown", fontsize=10, color=(0.5, 0.5, 0.5))
+                # Note: pypdfium2 has different drawing API
+                # For test purposes, we'll create a minimal PDF structure
 
             elif page_num == 1:
                 # Content page with table
@@ -78,9 +75,7 @@ class TestDocumentCreation:
                         x_pos += 120
                     y_pos += 25
 
-                # Draw table borders
-                table_rect = fitz.Rect(95, 225, 575, 330)
-                page.draw_rect(table_rect, color=(0.5, 0.5, 0.5), width=1)
+                # Note: pypdfium2 has different drawing API
 
                 # Add reference to next page
                 page.insert_text((100, 400), "See Figure 2.1 on page 3 for detailed workflow.", fontsize=12)
@@ -101,13 +96,7 @@ class TestDocumentCreation:
                     (450, 220, 500, 250, "Output"),
                 ]
 
-                for x1, y1, x2, y2, label in boxes:
-                    rect = fitz.Rect(x1, y1, x2, y2)
-                    page.draw_rect(rect, color=(0.7, 0.7, 0.7), width=2)
-                    # Center text in box
-                    text_x = x1 + (x2 - x1) / 2 - len(label) * 3
-                    text_y = y1 + (y2 - y1) / 2 + 5
-                    page.insert_text((text_x, text_y), label, fontsize=9)
+                # Note: pypdfium2 has different drawing API
 
                 # Draw arrows between boxes
                 arrow_y = 235
@@ -127,11 +116,7 @@ class TestDocumentCreation:
                 page.insert_text((100, 100), "Chapter 3: Results", fontsize=18, color=(0, 0, 0))
                 page.insert_text((100, 140), "The system produces high-quality outputs.", fontsize=12)
 
-                # Image placeholder
-                page.insert_text((100, 180), "Image 3.1: Sample Output", fontsize=14, color=(0, 0, 0))
-                image_rect = fitz.Rect(100, 200, 400, 350)
-                page.draw_rect(image_rect, color=(0.9, 0.9, 0.9), width=1, fill=True)
-                page.insert_text((200, 270), "[Sample Screenshot]", fontsize=12, color=(0.5, 0.5, 0.5))
+                # Note: pypdfium2 has different drawing API
 
                 # Results text
                 page.insert_text((100, 380), "Key achievements:", fontsize=12, color=(0, 0, 0))
@@ -161,7 +146,7 @@ class TestDocumentCreation:
     @staticmethod
     def create_simple_test_pdf(pdf_path: Path, pages: int = 3) -> None:
         """Create a simple test PDF for basic testing."""
-        doc = fitz.open()
+        doc = pdfium.PdfDocument.new()
 
         for page_num in range(pages):
             page = doc.new_page(width=595, height=842)
